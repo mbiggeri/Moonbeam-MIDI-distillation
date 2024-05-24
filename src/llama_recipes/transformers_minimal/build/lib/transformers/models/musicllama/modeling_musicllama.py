@@ -620,8 +620,8 @@ class LlamaSdpaAttention(LlamaAttention):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
-        cos, sin = self.rotary_emb(value_states, position_ids) #TODO change here! each dimension should have a seperate pos embedding
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin) #TODO change here! each dimension should have a seperate pos embedding
+        cos, sin = self.rotary_emb(value_states, position_ids)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
@@ -713,7 +713,7 @@ class LlamaDecoderLayer(nn.Module):
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
-            position_ids=position_ids, #TODO: ideally, each "dimension" of the tensor should have a position (pitch, onset etc)
+            position_ids=position_ids,
             past_key_value=past_key_value,
             output_attentions=output_attentions,
             use_cache=use_cache,
@@ -873,13 +873,7 @@ class LlamaModel(LlamaPreTrainedModel):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        # self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx) #Llama's implementation of word embedding
-        self.onset_embedding = 0#WE/OH/FME
-        self.dur_embedding = 0#WE/OH/FME
-        self.pitch_embedding = 0#WE/OH/FME
-        self.instrument_embedding = 0#WE/OH
-        self.velocity_embedding = 0#WE/OH/FME
-
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.layers = nn.ModuleList(
             [LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
@@ -888,21 +882,7 @@ class LlamaModel(LlamaPreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
-    def embed_tokens(self, input_ids):
-        #batch, len, 5 --> batch, len, dim, 5 (onset, duration, pitch, instr, velocity)
-        onsets = self.onset_embedding(input_ids[..., 0]) #batch, len
-        durs = self.dur_embedding(input_ids[..., 1]) #batch, len
-        pitches = self.pitch_embedding(input_ids[..., 2]) #batch, len
-        instruments = self.instrument_embedding(input_ids[..., 3]) #batch, len
-        velocities = self.velocity_embedding(input_ids[..., 4]) #batch, len  
 
-        #TODO: in the future, extend beyond 5
-
-
-        return torch.stack([onsets, durs, pitches, instruments, velocities], dim=-1)
-
-
-        #modified embedding-->  onset_binary, dur, [octave, pitch_class]['00000001101100111101', 25, [4, 11], 24, 58], [compound2], [compound3]]
     def get_input_embeddings(self):
         return self.embed_tokens
 
@@ -942,8 +922,8 @@ class LlamaModel(LlamaPreTrainedModel):
             use_cache = False
 
         if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids) #batch, len, 5 --> batch, len, dim, 5 
-        #Here the data looks like: shape = batch, len, 5;  ['00000001101100111101', 25, [4, 11], 24, 58], [compound2], [compound3]]
+            inputs_embeds = self.embed_tokens(input_ids)
+
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
             return_legacy_cache = True
@@ -959,7 +939,7 @@ class LlamaModel(LlamaPreTrainedModel):
 
         causal_mask = self._update_causal_mask(
             attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
-        ) #TODO: see what it does! TODO: need to input position IDs to it!
+        )
 
         # embed positions
         hidden_states = inputs_embeds
@@ -1103,12 +1083,11 @@ class LlamaModel(LlamaPreTrainedModel):
         return causal_mask
 
 
-class LlamaForCausalLM(LlamaPreTrainedModel):
+class MusicLlamaForCausalLM(LlamaPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config):
         super().__init__(config)
-        print("This is Actually MusicLLama...")
         self.model = LlamaModel(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
