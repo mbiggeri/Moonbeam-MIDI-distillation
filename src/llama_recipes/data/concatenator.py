@@ -20,12 +20,14 @@ class ConcatDataset(Dataset):
             "labels": [],
             }
 
+        sample_count = 0  # Initialize a counter for the samples
         for sample in tqdm(self.dataset, desc="Preprocessing dataset", dynamic_ncols=True):
-            buffer = {k: v + sample[k] for k,v in buffer.items()}
-
+            sample['attention_mask'] = [sample_count]*len(sample['attention_mask']) #In the model, each sample will only attend to itself according to the "sample_count" value
+            buffer = {k: v + sample[k] for k, v in buffer.items()}            
             while len(next(iter(buffer.values()))) > self.chunk_size:
                 self.samples.append({k: v[:self.chunk_size] for k,v in buffer.items()})
                 buffer = {k: v[self.chunk_size:] for k,v in buffer.items()}
+            sample_count += 1  # Increment the sample counter
 
     def __getitem__(self, idx):
         return self.samples[idx]
