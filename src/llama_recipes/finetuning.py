@@ -70,7 +70,9 @@ def setup_wandb(train_config, fsdp_config, **kwargs):
 def main(**kwargs):
     # Update the configuration for the training and sharding process
     train_config, fsdp_config = TRAIN_CONFIG(), FSDP_CONFIG()
+    model_config_path = "src/llama_recipes/configs/model_config.json"
     update_config((train_config, fsdp_config), **kwargs)
+    print("updated training config", train_config)
     # Set the seeds for reproducibility
     if is_xpu_available():
         torch.xpu.manual_seed(train_config.seed)
@@ -122,13 +124,17 @@ def main(**kwargs):
                 model = LlamaForCausalLM(llama_config)
 
     else:
-        model = LlamaForCausalLM.from_pretrained( #TODO: 
-            train_config.model_name,
-            load_in_8bit=True if train_config.quantization else None,
-            device_map="auto" if train_config.quantization else None,
-            use_cache=use_cache,
-            attn_implementation="sdpa" if train_config.use_fast_kernels else None,
-        )
+        # model = LlamaForCausalLM.from_pretrained( #TODO: 
+        #     train_config.model_name,
+        #     load_in_8bit=True if train_config.quantization else None,
+        #     device_map="auto" if train_config.quantization else None,
+        #     use_cache=use_cache,
+        #     attn_implementation="sdpa" if train_config.use_fast_kernels else None,
+        # )
+
+        llama_config = LlamaConfig.from_pretrained(model_config_path)
+        print(f"model_config:{llama_config}")
+        model = LlamaForCausalLM(llama_config) #TODO: Change fdsp above
 
     # Load the tokenizer and add special tokens
     tokenizer = AutoTokenizer.from_pretrained(train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name) #TODO: need to write new tokenizer
@@ -136,9 +142,9 @@ def main(**kwargs):
 
     # If there is a mismatch between tokenizer vocab size and embedding matrix, 
     # throw a warning and then expand the embedding matrix
-    if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
-        print("WARNING: Resizing the embedding matrix to match the tokenizer vocab size.")
-        model.resize_token_embeddings(len(tokenizer))
+    # if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
+    #     print("WARNING: Resizing the embedding matrix to match the tokenizer vocab size.")
+    #     model.resize_token_embeddings(len(tokenizer)) #Commented out since there's no tokenizer here
 
     print_model_size(model, train_config, rank if train_config.enable_fsdp else 0)
 
@@ -170,7 +176,7 @@ def main(**kwargs):
             freeze_transformer_layers(train_config.num_freeze_layers)
 
         mixed_precision_policy, wrapping_policy = get_policies(fsdp_config, rank)
-        my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, LlamaDecoderLayer)
+        my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, LlamaDecoderLayer) #TODO: dangerous
 
         device_id = 0
         if is_xpu_available():
