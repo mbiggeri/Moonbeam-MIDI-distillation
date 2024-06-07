@@ -8,11 +8,11 @@ black[jupyter]
 datasets
 fire
 peft
-transformers>=4.40.0
+transformers>=0.0.0
 sentencepiece
 py7zr
 scipy
-optimum
+#optimum
 matplotlib
 gradio
 chardet
