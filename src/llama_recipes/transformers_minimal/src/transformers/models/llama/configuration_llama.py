@@ -113,7 +113,6 @@ class LlamaConfig(PretrainedConfig):
 
     model_type = "llama"
     keys_to_ignore_at_inference = ["past_key_values"]
-
     def __init__(
         self,
         vocab_size=32000,

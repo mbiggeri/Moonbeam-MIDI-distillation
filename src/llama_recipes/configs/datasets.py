@@ -32,3 +32,10 @@ class custom_dataset:
     file: str = "examples/custom_dataset.py"
     train_split: str = "train"
     test_split: str = "validation"
+
+@dataclass
+class lakhmidi_dataset:
+    dataset: str = "lakhmidi_dataset"
+    data_path: str = "/data/scratch/acw753/lakhmidi/lmd_full"
+    train_split: str = "train"
+    test_split: str = "validation"
