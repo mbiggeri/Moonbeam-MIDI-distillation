@@ -224,6 +224,25 @@ def save_optimizer_checkpoint(model, optimizer, rank, cfg, epoch=1):
 
         print(f"--> saved {opt_save_full_path} to disk")
 
+def save_model_checkpoint_ddp(model, optimizer, rank, cfg, epoch=1, step=200):
+    
+    if rank == 0:
+        print(f"--> saving model ...")
+        # create save path
+        folder_name = (
+        cfg.dist_checkpoint_root_folder
+        + "/"
+        + cfg.dist_checkpoint_folder
+        + "-"
+        + cfg.model_name
+        )
+        save_dir = Path.cwd() / folder_name
+        save_dir.mkdir(parents=True, exist_ok=True)
+        save_name = cfg.model_name + "-" + str(epoch) + "-" +str(step)+".pt"
+        save_full_path = str(save_dir) + "/" + save_name
+
+        torch.save(model.state_dict(), save_full_path)
+        print(f"model checkpoint saved for epoch {epoch} at {save_full_path}\n")
 
 def load_optimizer_checkpoint(model, optimizer_checkpoint_path, rank):
     """load an fsdp optimizer full_state checkpoint using scatter method
