@@ -99,6 +99,14 @@ def get_dataloader_kwargs(train_config, dataset, tokenizer, mode):
                 shuffle=mode=="train",
                 drop_last=True,
             )
+            elif train_config.enable_ddp:
+                kwargs["sampler"] = DistributedSampler(
+                dataset,
+                rank=dist.get_rank(),
+                num_replicas=dist.get_world_size(),
+                shuffle=mode=="train",
+                drop_last=True,
+                )
             kwargs["batch_size"] = batch_size
             kwargs["drop_last"] = True
             kwargs["collate_fn"] = default_data_collator
