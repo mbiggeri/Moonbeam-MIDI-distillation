@@ -9,8 +9,10 @@ class train_config:
     model_name: str="PATH/to/Model"
     tokenizer_name: str=None
     enable_fsdp: bool=False
+    enable_ddp: bool=False
     low_cpu_fsdp: bool=False
     run_validation: bool=True
+    validation_interval: int=200
     batch_size_training: int=4
     batching_strategy: str="packing" #alternative: padding
     context_length: int=1024

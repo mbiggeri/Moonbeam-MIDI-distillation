@@ -36,6 +36,7 @@ class custom_dataset:
 @dataclass
 class lakhmidi_dataset:
     dataset: str = "lakhmidi_dataset"
-    data_path: str = "/data/scratch/acw753/lakhmidi/lmd_full"
     train_split: str = "train"
-    test_split: str = "validation"
+    test_split: str = "test"
+    data_dir: str = "/data/scratch/acw753/lakhmidi_processed"
+    csv_file: str = "/data/scratch/acw753/lakhmidi_processed/train_test_split.csv"
