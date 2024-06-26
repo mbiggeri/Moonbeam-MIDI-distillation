@@ -2,7 +2,7 @@
 # This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
 
 import os
-
+import json
 import dataclasses
 import fire
 import random
@@ -15,15 +15,18 @@ from torch.distributed.fsdp import (
 )
 
 from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim.lr_scheduler import StepLR
 from transformers import (
     AutoTokenizer,
     LlamaForCausalLM,
     LlamaConfig,
 )
+from llama_recipes.datasets.music_tokenizer import MusicTokenizer
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
 from llama_recipes.configs import fsdp_config as FSDP_CONFIG
+from llama_recipes.configs import ddp_config as DDP_CONFIG
 from llama_recipes.configs import train_config as TRAIN_CONFIG
 from llama_recipes.data.concatenator import ConcatDataset
 from llama_recipes.policies import AnyPrecisionAdamW, apply_fsdp_checkpointing
@@ -49,7 +52,7 @@ from llama_recipes.utils.train_utils import (
 )
 from accelerate.utils import is_xpu_available
 
-def setup_wandb(train_config, fsdp_config, **kwargs):
+def setup_wandb(train_config, fsdp_config, llama_config, **kwargs):
     try:
         import wandb
     except ImportError:
@@ -64,14 +67,30 @@ def setup_wandb(train_config, fsdp_config, **kwargs):
     run = wandb.init(**init_dict)
     run.config.update(train_config)
     run.config.update(fsdp_config, allow_val_change=True)
+
+    # Convert the llama_config to a dictionary and then to a JSON string
+    config_dict = llama_config.to_dict()
+    config_json = json.dumps(config_dict, indent=4)
+    
+    # Get the wandb run directory
+    wandb_run_dir = run.dir
+    
+    # Define the file path within the wandb run directory
+    config_file_path = os.path.join(wandb_run_dir, 'llama_config.json')
+    print(f"creating output dir:{train_config.output_dir}")
+    os.makedirs(train_config.output_dir, exist_ok=True)
+    # Write the JSON string to the file
+    with open(config_file_path, 'w') as f:
+        f.write(config_json)
+        print(f"config file saved to {config_file_path}!")
     return run
 
 
 def main(**kwargs):
     # Update the configuration for the training and sharding process
-    train_config, fsdp_config = TRAIN_CONFIG(), FSDP_CONFIG()
+    train_config, fsdp_config, ddp_config = TRAIN_CONFIG(), FSDP_CONFIG(), DDP_CONFIG()
     model_config_path = "src/llama_recipes/configs/model_config.json"
-    update_config((train_config, fsdp_config), **kwargs)
+    update_config((train_config, fsdp_config, ddp_config), **kwargs)
     print("updated training config", train_config)
     # Set the seeds for reproducibility
     if is_xpu_available():
@@ -79,8 +98,8 @@ def main(**kwargs):
     torch.manual_seed(train_config.seed)
     random.seed(train_config.seed)
 
-    if train_config.enable_fsdp: #TODO: what is this? Read this  https://arxiv.org/pdf/2304.11277#:~:text=Fully%20Sharded%20Data%20Parallel%20(FSDP)%20is%20capable%20of%20scaling%20to,by%20sharding%20the%20dense%20parameters. 
-        setup()
+    if train_config.enable_fsdp or train_config.enable_ddp: #TODO: what is this? Read this  https://arxiv.org/pdf/2304.11277#:~:text=Fully%20Sharded%20Data%20Parallel%20(FSDP)%20is%20capable%20of%20scaling%20to,by%20sharding%20the%20dense%20parameters. 
+        setup() #enable nccl / ccl
         # torchrun specific
         local_rank = int(os.environ["LOCAL_RANK"])
         rank = int(os.environ["RANK"])
@@ -96,12 +115,8 @@ def main(**kwargs):
 
     wandb_run = None
 
-    if train_config.use_wandb:
-        if not train_config.enable_fsdp or rank==0:
-            wandb_run = setup_wandb(train_config, fsdp_config, **kwargs)
-
     # Load the pre-trained model and setup its configuration
-    use_cache = False if train_config.enable_fsdp else None
+    use_cache = False if train_config.enable_fsdp or train_config.enable_ddp else None
     if train_config.enable_fsdp and train_config.low_cpu_fsdp:
         """
         for FSDP, we can save cpu memory by loading pretrained model on rank0 only.
@@ -123,22 +138,20 @@ def main(**kwargs):
             with torch.device("meta"):
                 model = LlamaForCausalLM(llama_config)
 
-    else:
-        # model = LlamaForCausalLM.from_pretrained( #TODO: 
-        #     train_config.model_name,
-        #     load_in_8bit=True if train_config.quantization else None,
-        #     device_map="auto" if train_config.quantization else None,
-        #     use_cache=use_cache,
-        #     attn_implementation="sdpa" if train_config.use_fast_kernels else None,
-        # )
-
+    else: #DDP and non-distributed training
         llama_config = LlamaConfig.from_pretrained(model_config_path)
+        llama_config.use_cache = use_cache
         print(f"model_config:{llama_config}")
-        model = LlamaForCausalLM(llama_config) #TODO: Change fdsp above
+        model = LlamaForCausalLM(llama_config) 
+
+
+    if train_config.use_wandb: #TODO update ddp config
+        if not train_config.enable_fsdp or rank==0:
+            wandb_run = setup_wandb(train_config, fsdp_config, llama_config, **kwargs)
+
 
     # Load the tokenizer and add special tokens
-    tokenizer = AutoTokenizer.from_pretrained(train_config.model_name if train_config.tokenizer_name is None else train_config.tokenizer_name) #TODO: need to write new tokenizer
-    tokenizer.pad_token_id = tokenizer.eos_token_id
+    tokenizer = MusicTokenizer(onset_vocab_size = llama_config.onset_vocab_size, dur_vocab_size = llama_config.dur_vocab_size, octave_vocab_size = llama_config.octave_vocab_size, pitch_class_vocab_size = llama_config.pitch_class_vocab_size, instrument_vocab_size = llama_config.instrument_vocab_size, velocity_vocab_size = llama_config.velocity_vocab_size, sos_token = llama_config.sos_token, eos_token = llama_config.eos_token, pad_token = llama_config.pad_token)
 
     # If there is a mismatch between tokenizer vocab size and embedding matrix, 
     # throw a warning and then expand the embedding matrix
@@ -146,7 +159,7 @@ def main(**kwargs):
     #     print("WARNING: Resizing the embedding matrix to match the tokenizer vocab size.")
     #     model.resize_token_embeddings(len(tokenizer)) #Commented out since there's no tokenizer here
 
-    print_model_size(model, train_config, rank if train_config.enable_fsdp else 0)
+    print_model_size(model, train_config, rank if train_config.enable_fsdp or train_config.enable_ddp else 0)
 
     # Prepare the model for int8 training if quantization is enabled
     if train_config.quantization:
@@ -156,6 +169,9 @@ def main(**kwargs):
     if train_config.enable_fsdp and fsdp_config.pure_bf16:
         model.to(torch.bfloat16)
 
+    if train_config.enable_ddp and ddp_config.pure_bf16:
+        model.to(torch.bfloat16)
+
     if train_config.use_peft:
         peft_config = generate_peft_config(train_config, kwargs) #TODO: Understand what is PEFT, FSDP
         model = get_peft_model(model, peft_config)
@@ -163,8 +179,7 @@ def main(**kwargs):
         if wandb_run:
             wandb_run.config.update(peft_config)
 
-
-    hsdp_device_mesh = None
+    hsdp_device_mesh = None #TODO change this to include ddp
     if fsdp_config.hsdp and fsdp_config.sharding_strategy == ShardingStrategy.HYBRID_SHARD:
         hsdp_device_mesh = hsdp_device_mesh(replica_group_size=fsdp_config.replica_group_size, sharding_group_size=fsdp_config.sharding_group_size)
         print("HSDP device mesh is ready")
@@ -198,7 +213,16 @@ def main(**kwargs):
             if train_config.low_cpu_fsdp and rank != 0 else None,
         )
         if fsdp_config.fsdp_activation_checkpointing:
-            apply_fsdp_checkpointing(model)
+            apply_fsdp_checkpointing(model) #TODO: Add DDP
+    elif train_config.enable_ddp: #wrap ddp code
+        mixed_precision_policy, wrapping_policy = get_policies(ddp_config, rank)
+        model.to(local_rank)
+        model = DDP(model,
+                    mixed_precision=mixed_precision_policy if not ddp_config.pure_bf16 else None, 
+                    device_mesh=hsdp_device_mesh,
+                    device_ids=[local_rank],
+                    find_unused_parameters=True #TODO: delete
+                    )
     elif not train_config.quantization and not train_config.enable_fsdp:
         if is_xpu_available():
             model.to("xpu:0")
@@ -226,7 +250,7 @@ def main(**kwargs):
             print(f"--> Validation Set Length = {len(dataset_val)}")
 
     if train_config.batching_strategy == "packing":
-        dataset_train = ConcatDataset(dataset_train, chunk_size=train_config.context_length)
+        dataset_train = ConcatDataset(dataset_train, chunk_size=train_config.context_length, split="train",data_dir = dataset_config.data_dir) 
 
     train_dl_kwargs = get_dataloader_kwargs(train_config, dataset_train, tokenizer, "train")
 
@@ -241,7 +265,7 @@ def main(**kwargs):
     eval_dataloader = None
     if train_config.run_validation:
         if train_config.batching_strategy == "packing":
-            dataset_val = ConcatDataset(dataset_val, chunk_size=train_config.context_length)
+            dataset_val = ConcatDataset(dataset_val, chunk_size=train_config.context_length, split="val", data_dir = dataset_config.data_dir )
 
         val_dl_kwargs = get_dataloader_kwargs(train_config, dataset_val, tokenizer, "val")
 
@@ -281,8 +305,9 @@ def main(**kwargs):
         train_config.gradient_accumulation_steps,
         train_config,
         fsdp_config if train_config.enable_fsdp else None,
-        local_rank if train_config.enable_fsdp else None,
-        rank if train_config.enable_fsdp else None,
+        ddp_config if train_config.enable_ddp else None,
+        local_rank if (train_config.enable_fsdp or train_config.enable_ddp) else None, #TODO: change this and train_utils
+        rank if (train_config.enable_fsdp or train_config.enable_ddp) else None,#TODO: change this and train_utils
         wandb_run,
     )
     if not train_config.enable_fsdp or rank==0:
