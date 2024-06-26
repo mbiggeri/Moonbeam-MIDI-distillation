@@ -273,7 +273,7 @@ class LlamaOutputAttention(nn.Module):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-        bsz, q_len, _ = hidden_states.size() #TODO: think how to reshape
+        bsz, q_len, _ = hidden_states.size()
 
         if self.config.pretraining_tp > 1:
             key_value_slicing = (self.num_key_value_heads * self.head_dim) // self.config.pretraining_tp
@@ -759,6 +759,16 @@ class LlamaSdpaAttention(LlamaAttention):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         
         #different heads carry different information: first group of heads: onset; second group of heads: duration; third group of head: pitch so on and so forth
+        #TODO: modify positions_id such that sos is assigned with pos 0 and eos is assigned with pos 2 ** config.onset_vocab
+        
+        where_sos = (position_ids[..., 0] == self.config.sos_token).unsqueeze(-1) #only check the onset dimension  
+        where_eos = (position_ids[..., 0] == self.config.eos_token).unsqueeze(-1) 
+        
+        #Since SOS and EOS are negative number, temporarily change it to 0 to avoid indexing error
+        position_ids_sos = torch.where(where_sos, torch.tensor([0 for _ in range(6)]).to(hidden_states.device), position_ids)
+        position_ids_eos = torch.where(where_eos, torch.tensor([2**15 for _ in range(6)]).to(hidden_states.device), position_ids_sos)
+        position_ids = position_ids_eos
+
         cos_onset, sin_onset = self.rotary_emb_onset(value_states, position_ids[:, :, 0]) #position_ids: batch, len, 6; last dim: (onset, duration, octave, pitch_class, instrument, velocity)
         cos_dur, sin_dur = self.rotary_emb_dur(value_states, position_ids[:, :, 1]) 
         cos_octave, sin_octave = self.rotary_emb_octave(value_states, position_ids[:, :, 2]) 
@@ -780,7 +790,7 @@ class LlamaSdpaAttention(LlamaAttention):
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin_onset": sin_onset, "cos_onset": cos_onset, "cache_position": cache_position} #TODO: think what to cache here
+            cache_kwargs = {"cache_position": cache_position} #it's not used in cache_utils.py!
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -800,7 +810,6 @@ class LlamaSdpaAttention(LlamaAttention):
         # We dispatch to SDPA's Flash Attention or Efficient kernels via this if statement instead of an
         # inline conditional assignment to support both torch.compile's `dynamic=True` and `fullgraph=True`
         is_causal = True if causal_mask is None and q_len > 1 else False
-
         attn_output = torch.nn.functional.scaled_dot_product_attention(
             query_states,
             key_states,
@@ -1026,7 +1035,7 @@ class WordEmbedding(nn.Module):
 
 
 class Fundamental_Music_Embedding(nn.Module):
-    def __init__(self, dim, base, padding_idx = None, device=None): #TODO: add padding_idx
+    def __init__(self, dim, base, padding_idx = None, device=None):
         super().__init__() 
         self.d_model = dim
         self.base = base
@@ -1043,11 +1052,12 @@ class Fundamental_Music_Embedding(nn.Module):
         assert inp.dim()==2
         device_type = inp.device.type
         device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
+        data_type = self.linear_fme.weight.dtype
         # self.to(device_type)
 
         inp = inp[..., None] #pos (batch, num_pitch, 1)
 
-        angle_rads = inp*self.angles.to(device_type) #(batch, num_pitch)*(1,dim)
+        angle_rads = inp*self.angles.to(device_type, dtype=data_type) #(batch, num_pitch)*(1,dim)
 
         # apply sin to even indices in the array; 2i
         angle_rads[:, :, 0::2] = torch.sin(angle_rads.clone()[:, : , 0::2])
@@ -1055,9 +1065,9 @@ class Fundamental_Music_Embedding(nn.Module):
         # apply cos to odd indices in the array; 2i+1
         angle_rads[:, :, 1::2] = torch.cos(angle_rads.clone()[:, :, 1::2])
 
-        pos_encoding = angle_rads.to(torch.float32)
+        pos_encoding = angle_rads.to(data_type)
         
-        pos_encoding += self.translation_bias
+        pos_encoding += self.translation_bias.to(data_type)
         out = self.linear_fme(pos_encoding)
         
         return out
@@ -1080,21 +1090,23 @@ class LlamaModel(LlamaPreTrainedModel):
 
     def __init__(self, config: LlamaConfig):
         super().__init__(config)
-        self.padding_idx = config.pad_token_id
+        self.sos_token = config.sos_token
+        self.eos_token = config.eos_token
+        self.padding_idx = config.pad_token
         self.vocab_size = config.vocab_size
         # self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx) #Llama's implementation of word embedding
 
         #First distribute embedding dimensions based on total hidden_size and number of heads
 
         emb_size = config.hidden_size //6 
-        self.onset_embedding = EMBEDDING_METHODS[config.onset_embedding['method']](dim = emb_size, **{k: v for k, v in config.onset_embedding.items() if k != 'method'}) #TODO:Implement these embedding methods, think of what to do with padding idx
+        self.onset_embedding = EMBEDDING_METHODS[config.onset_embedding['method']](dim = emb_size, **{k: v for k, v in config.onset_embedding.items() if k != 'method'})
         self.dur_embedding = EMBEDDING_METHODS[config.dur_embedding['method']](dim = emb_size, **{k: v for k, v in config.dur_embedding.items() if k != 'method'})
         self.octave_embedding = EMBEDDING_METHODS[config.octave_embedding['method']](dim = emb_size, **{k: v for k, v in config.octave_embedding.items() if k != 'method'})
         self.pitch_embedding = EMBEDDING_METHODS[config.pitch_embedding['method']](dim = emb_size, **{k: v for k, v in config.pitch_embedding.items() if k != 'method'})
         self.instrument_embedding = EMBEDDING_METHODS[config.instrument_embedding['method']](dim = emb_size, **{k: v for k, v in config.instrument_embedding.items() if k != 'method'})
         self.velocity_embedding = EMBEDDING_METHODS[config.velocity_embedding['method']](dim = emb_size, **{k: v for k, v in config.velocity_embedding.items() if k != 'method'})
         
-        self.supplementary_embedding = nn.Embedding(2, config.hidden_size, self.padding_idx)
+        self.supplementary_embedding = nn.Embedding(2, config.hidden_size) #one for sos and one for eos
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.layers = nn.ModuleList(
@@ -1106,33 +1118,35 @@ class LlamaModel(LlamaPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
     def embed_tokens(self, input_ids):
-        #(onset, duration, octave, pitch_class, instrument, velocity)
-        #batch, len, 6 --> batch, len, dim*6
-        #SOS, EOS tokens are embedded seperately TODO
+        #(onset, duration, octave, pitch_class, instrument, velocity); batch, len, 6 --> batch, len, dim*6 
+        #1. scan through the onset and detect positions of SOS and EOS;         
+        #2. where sos --> embed using sos; where eos --> embed using eos, other places embed using FME
+        #3. skew them together 
         
+        #SOS, EOS tokens are embedded seperately
         sos = self.supplementary_embedding(torch.tensor(0).to(input_ids.device))[None, None, ...].expand(input_ids.size(0), -1, -1) #dim*6 --> 1, 1, dim*6 --> batch, 1, dim*6
         eos = self.supplementary_embedding(torch.tensor(1).to(input_ids.device))[None, None, ...].expand(input_ids.size(0), -1, -1)
-        onsets = self.onset_embedding(input_ids[:, 1:-1, 0]) #batch, len-2 --> batch, len-2, dim
-        durs = self.dur_embedding(input_ids[:, 1:-1, 1])
-        octaves = self.octave_embedding(input_ids[:, 1:-1, 2]) 
-        pitch_classes = self.pitch_embedding(input_ids[:, 1:-1, 3])
-        instruments = self.instrument_embedding(input_ids[:, 1:-1, 4]) 
-        velocities = self.velocity_embedding(input_ids[:, 1:-1, 5])
-        out = torch.concat([onsets, durs, octaves, pitch_classes, instruments, velocities], dim=-1) #batch, len-2, dim*6
-        out = torch.concat([sos, out, eos], dim = 1)
-        return out
 
-        # print("input_ids", input_ids)
+        #Detect SOS and EOS:
+        where_sos = (input_ids[:, :, 0] == self.sos_token).unsqueeze(-1)
+        where_eos = (input_ids[:, :, 0] == self.eos_token).unsqueeze(-1)
 
-        # onsets = self.onset_embedding(input_ids[..., 0]) #batch, len --> batch, len, dim
-        # durs = self.dur_embedding(input_ids[..., 1]) #batch, len --> batch, len, dim
-        # octaves = self.octave_embedding(input_ids[..., 2]) #batch, len --> batch, len, dim
-        # pitch_classes = self.pitch_embedding(input_ids[..., 3])
-        # instruments = self.instrument_embedding(input_ids[..., 4]) #batch, len --> batch, len, dim
-        # print("wtf happened here", input_ids[..., 5])
-        # velocities = self.velocity_embedding(input_ids[..., 5]) #batch, len --> batch, len, dim
+        #Since SOS and EOS are negative number, temporarily change it to 0 to avoid indexing error
+        input_ids_tmp = torch.where((where_sos|where_eos), torch.tensor([0 for _ in range(6)]).to(input_ids), input_ids)
 
-        # return torch.concat([onsets, durs, octaves, pitch_classes, instruments, velocities], dim=-1) #batch, len, dim*6
+        onsets = self.onset_embedding(input_ids_tmp[..., 0])
+        durs = self.dur_embedding(input_ids_tmp[..., 1])
+        octaves = self.octave_embedding(input_ids_tmp[..., 2]) 
+        pitch_classes = self.pitch_embedding(input_ids_tmp[..., 3])
+        instruments = self.instrument_embedding(input_ids_tmp[..., 4]) 
+        velocities = self.velocity_embedding(input_ids_tmp[..., 5])
+        out_fme = torch.concat([onsets, durs, octaves, pitch_classes, instruments, velocities], dim=-1) #batch, len, dim*6
+        
+        #skew them together
+        out_fme_sos = torch.where(where_sos, sos, out_fme) #batch, len, 1; batch, 1, dim; batch, len, dim
+        
+        out_fme_sos_eos = torch.where(where_eos, eos, out_fme_sos)
+        return out_fme_sos_eos
     def get_input_embeddings(self):
         return self.embed_tokens
 
@@ -1178,12 +1192,12 @@ class LlamaModel(LlamaPreTrainedModel):
             return_legacy_cache = True
             past_key_values = DynamicCache.from_legacy_cache(past_key_values)
 
-        if cache_position is None:
+        if cache_position is None: #not actually in use during inference
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
                 past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
             )
-        if position_ids is None:
+        if position_ids is None: #not actually in use 
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = self._update_causal_mask(
@@ -1269,72 +1283,33 @@ class LlamaModel(LlamaPreTrainedModel):
                 return attention_mask
             return None
 
-        # For SDPA, when possible, we will rely on its `is_causal` argument instead of its `attn_mask` argument, in
-        # order to dispatch on Flash Attention 2. This feature is not compatible with static cache, as SDPA will fail
-        # to infer the attention mask.
-        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-        using_static_cache = isinstance(past_key_values, StaticCache)
+        if attention_mask is None: #During inference, use KV cache
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
 
-        # When output attentions is True, sdpa implementation's forward method calls the eager implementation's forward
-        """if self.config._attn_implementation == "sdpa" and not using_static_cache and not output_attentions:
-            if AttentionMaskConverter._ignore_causal_mask_sdpa(
-                attention_mask,
-                inputs_embeds=input_tensor,
-                past_key_values_length=past_seen_tokens,
-                is_training=self.training,
-            ):
-                return None""" #commented out since a custom mask is applied
-        # 2: Generate the boolean extended attention mask where a same sample can only attend to itself; #source: https://github.com/graphcore/examples/blob/master/tutorials/blogs_code/finetuning-packedBERT/walkthrough.ipynb 
-        attention_mask = attention_mask[:, None, :] #batch, 1, len
-        attention_mask_rep = attention_mask.expand(-1, attention_mask.shape[2], -1) #batch, len, len
-        attention_mask = (attention_mask_rep == attention_mask_rep.transpose(1, 2)) 
-        attention_mask = attention_mask.unsqueeze(1) #unsqueeze in head dimension: batch, len, len
-        return attention_mask #TODO: cache the mask during generation
-        """dtype, device = input_tensor.dtype, input_tensor.device
-        min_dtype = torch.finfo(dtype).min
-        sequence_length = input_tensor.shape[1]
-        if using_static_cache:
-            target_length = past_key_values.get_max_length()
-        else:
-            target_length = (
-                attention_mask.shape[-1]
-                if isinstance(attention_mask, torch.Tensor)
-                else past_seen_tokens + sequence_length + 1
-            )
+            dtype, device = input_tensor.dtype, input_tensor.device
+            min_dtype = torch.finfo(dtype).min
+            sequence_length = input_tensor.shape[1]
 
-        if attention_mask is not None and attention_mask.dim() == 4:
-            # in this case we assume that the mask comes already in inverted form and requires no inversion or slicing
-            if attention_mask.max() != 0:
-                raise ValueError("Custom 4D attention mask should be passed in inverted form with max==0`")
-            causal_mask = attention_mask
-        else:
+            target_length = past_seen_tokens + sequence_length
+
             causal_mask = torch.full(
                 (sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device
             )
             if sequence_length != 1:
                 causal_mask = torch.triu(causal_mask, diagonal=1)
-            causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
-            causal_mask = causal_mask[None, None, :, :].expand(input_tensor.shape[0], 1, -1, -1)
-            if attention_mask is not None:
-                causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
-                mask_length = attention_mask.shape[-1]
-                padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
-                padding_mask = padding_mask == 0
-                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
-                    padding_mask, min_dtype
-                )
-        if (
-            self.config._attn_implementation == "sdpa"
-            and attention_mask is not None
-            and attention_mask.device.type == "cuda"
-            and not output_attentions
-        ):
-            # Attend to all tokens in fully masked rows in the causal_mask, for example the relevant first rows when
-            # using left padding. This is required by F.scaled_dot_product_attention memory-efficient attention path.
-            # Details: https://github.com/pytorch/pytorch/issues/110213
-            causal_mask = AttentionMaskConverter._unmask_unattended(causal_mask, min_dtype)
 
-        return causal_mask"""
+            causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1) #during inference, *= not actually in use
+
+            causal_mask = causal_mask[None, None, :, :].expand(input_tensor.shape[0], 1, -1, -1) #batch, 1, seq_len, tar_len
+
+            return causal_mask 
+        
+        if len(attention_mask.shape) == 2: #During training or evaluation, attention_mask contains concatenated data
+            attention_mask = attention_mask[:, None, :] #batch, 1, len
+            attention_mask_rep = attention_mask.expand(-1, attention_mask.shape[2], -1) #batch, len, len
+            attention_mask = (attention_mask_rep == attention_mask_rep.transpose(1, 2)) 
+            attention_mask = attention_mask.unsqueeze(1) #unsqueeze in head dimension: batch, len, len
+            return attention_mask 
 
 
 class LlamaForCausalLM(LlamaPreTrainedModel):
@@ -1345,7 +1320,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         self.model = LlamaModel(config)
         # self.vocab_size = config.vocab_size
         # self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False) #change this to n transformer layers such that each logits represents conditional probability on other elements
-        self.lm_head = nn.Linear(config.hidden_size, config.hidden_size, bias=False) #change this to n transformer layers such that each logits represents conditional probability on other elements
+        self.lm_head = nn.Linear(config.hidden_size, config.hidden_size, bias=False) #TODO: remove in the future
 
         output_attn_layers_config_dict = {k: v for k, v in config.output_attention_layer.items() if k != 'layers'}
         output_attn_layers_config = CustomConfig(output_attn_layers_config_dict)
@@ -1443,60 +1418,62 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         )
 
         hidden_states = outputs[0]
-        if self.config.pretraining_tp > 1:
+        if self.config.pretraining_tp > 1: #not really in use
             lm_head_slices = self.lm_head.weight.split(self.vocab_size // self.config.pretraining_tp, dim=0)
             logits = [F.linear(hidden_states, lm_head_slices[i]) for i in range(self.config.pretraining_tp)]
             logits = torch.cat(logits, dim=-1)
         else:
-            # logits = self.lm_head(hidden_states) #replace the lm head with attention layers
             logits = hidden_states
-        logits = logits.float()
 
-        loss = None
+        #Apply self attention at the feature dim:
+        logits_reshaped = logits.view(logits.shape[0]*logits.shape[1], 6, -1)
+        
+        for layer in self.output_attn_layers:
+            output_layer_output = layer(logits_reshaped) 
+            logits_reshaped = output_layer_output[0] #batch*len, 6, dim/6
+        
+        
+        logits_reshaped_back = logits_reshaped.view(logits.shape[0], logits.shape[1], 6, -1) #batch, len, 6, dim/6 
+
+        onset_logits = self.lm_onset_head(logits_reshaped_back[..., 0, :]) #batch, len, dim/6 -> batch, len, onset_vocab
+        duration_logits = self.lm_dur_head(logits_reshaped_back[..., 1, :])
+        octave_logits = self.lm_octave_head(logits_reshaped_back[..., 2, :])
+        pitch_logits = self.lm_pitch_head(logits_reshaped_back[..., 3, :])
+        instrument_logits = self.lm_instrument_head(logits_reshaped_back[..., 4, :])
+        velocity_logits = self.lm_velocity_head(logits_reshaped_back[..., 5, :])
+
+
+        loss, onset_loss, duration_loss, octave_loss, pitch_loss, instrument_loss, velocity_loss = None, None, None, None, None, None, None
         if labels is not None:
             # Shift so that tokens < n predict n
-            shift_logits = logits[..., :-1, :].contiguous() #batch, len, dim
-            shift_labels = labels[..., 1:, :].contiguous() #batch, len, dim
+            # shift_logits = logits[..., :-1, :].contiguous() #batch, len, dim
+            shift_onset_logits = onset_logits[..., :-1, :].contiguous() #batch, len, onset_vocab --> batch, len-1, onset_vocab 
+            shift_duration_logits = duration_logits[..., :-1, :].contiguous()
+            shift_octave_logits= octave_logits[..., :-1, :].contiguous()
+            shift_pitch_logits = pitch_logits[..., :-1, :].contiguous()
+            shift_instrument_logits= instrument_logits[..., :-1, :].contiguous()
+            shift_velocity_logits = velocity_logits[..., :-1, :].contiguous()
 
-            shift_labels = shift_labels.to(shift_logits.device)
+            onset_logits = shift_onset_logits.view(-1, onset_logits.shape[-1]).float() #batch, len-1, onset_vocab --> batch*len-1, onset_vocab 
+            duration_logits = shift_duration_logits.view(-1, duration_logits.shape[-1]).float()
+            octave_logits = shift_octave_logits.view(-1, octave_logits.shape[-1]).float()
+            pitch_logits = shift_pitch_logits.view(-1, pitch_logits.shape[-1]).float()
+            instrument_logits = shift_instrument_logits.view(-1, instrument_logits.shape[-1]).float()
+            velocity_logits = shift_velocity_logits.view(-1, velocity_logits.shape[-1]).float()
+
+            shift_labels = labels[..., 1:, :].contiguous() #batch, len-1, dim
+            shift_labels = shift_labels.to(onset_logits.device)
+            onset_label = shift_labels[..., :self.onset_bits].view(-1,self.onset_bits).float() #batch, len, bits-->  batch*len, bits
+            duration_label = shift_labels[..., self.onset_bits].view(-1) #batch, len --> batch*len
+            octave_label = shift_labels[..., self.onset_bits+1].view(-1)
+            pitch_label = shift_labels[..., self.onset_bits+2].view(-1)
+            instrument_label = shift_labels[..., self.onset_bits+3].view(-1)
+            velocity_label = shift_labels[..., self.onset_bits+4].view(-1)
 
             loss_func = CrossEntropyLoss()
             loss_onset_func = BCEWithLogitsLoss()
 
-            #Apply self attention at the feature dim:
-            hidden_shift_logits = shift_logits.view(shift_logits.shape[0]*shift_logits.shape[1], 6, -1)
-            # shift_logits_attn = self.output_attn_layers(shift_logits_reshaped) #batch*len, 6, dim/6 --> batch*len, 6, dim/6 #TODO: 1st June Double check whether this is implemented correctly
-            
-            for layer in self.output_attn_layers:
-                output_layer_output = layer(hidden_shift_logits) 
-                hidden_shift_logits = output_layer_output[0] #batch*len, 6, dim/6
-            
-            # shift_logits_attn = hidden_shift_logits.view(shift_logits.shape[0],shift_logits.shape[1], -1 ) #  TODO: 1st June  double check correctness
-            # shift_logits_attn = self.lm_head(hidden_states)
-            
-            
-            onset_logits = self.lm_onset_head(hidden_shift_logits[:, 0, :]) #batch*len, dim/6 -> batch*len, onset_vocab
-            duration_logits = self.lm_dur_head(hidden_shift_logits[:, 1, :])
-            octave_logits = self.lm_octave_head(hidden_shift_logits[:, 2, :])
-            pitch_logits = self.lm_pitch_head(hidden_shift_logits[:, 3, :])
-            instrument_logits = self.lm_instrument_head(hidden_shift_logits[:, 4, :])
-            velocity_logits = self.lm_velocity_head(hidden_shift_logits[:, 5, :])
-
             # apply CE loss for all elements
-            onset_label = shift_labels[..., :self.onset_bits].view(-1,self.onset_bits) #batch, len, bits-->  batch*len, bits
-            onset_label = onset_label.to(shift_logits.dtype)
-
-            duration_label = shift_labels[..., self.onset_bits].view(-1) #batch, len --> batch*len
-            octave_label = shift_labels[..., self.onset_bits+1].view(-1) 
-            pitch_label = shift_labels[..., self.onset_bits+2].view(-1) 
-            instrument_label = shift_labels[..., self.onset_bits+3].view(-1) 
-            velocity_label = shift_labels[..., self.onset_bits+4].view(-1) 
-
-            # shift_logits = shift_logits.view(-1, self.config.vocab_size)
-            # shift_labels = shift_labels.view(-1)
-            # # Enable model parallelism
-            # shift_labels = shift_labels.to(shift_logits.device)
-            # loss = loss_fct(shift_logits, shift_labels)
             onset_loss = loss_onset_func(onset_logits, onset_label)
             duration_loss = loss_func(duration_logits, duration_label)
             octave_loss = loss_func(octave_logits, octave_label)
@@ -1504,15 +1481,26 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
             instrument_loss = loss_func(instrument_logits, instrument_label)
             velocity_loss = loss_func(velocity_logits, velocity_label)
 
-            loss = onset_loss + duration_loss + octave_loss + pitch_loss + instrument_loss + velocity_loss
+            loss = onset_loss + duration_loss + octave_loss + pitch_loss + instrument_loss + velocity_loss #TODO: check how to reduce graph size
 
         if not return_dict:
             output = (logits,) + outputs[1:]
-            return (loss,) + output if loss is not None else output
+            return (loss, onset_loss, duration_loss, octave_loss, pitch_loss, instrument_loss, velocity_loss, onset_logits, duration_logits, octave_logits, pitch_logits, instrument_logits, velocity_logits) + output if loss is not None else output 
 
         return CausalLMOutputWithPast(
             loss=loss,
-            logits=logits,
+            onset_loss = onset_loss, 
+            duration_loss = duration_loss,
+            octave_loss = octave_loss, 
+            pitch_loss = pitch_loss, 
+            instrument_loss = instrument_loss, 
+            velocity_loss = velocity_loss,
+            onset_logits=onset_logits,
+            duration_logits=duration_logits,
+            octave_logits = octave_logits, 
+            pitch_logits = pitch_logits, 
+            instrument_logits = instrument_logits,
+            velocity_logits = velocity_logits, 
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
