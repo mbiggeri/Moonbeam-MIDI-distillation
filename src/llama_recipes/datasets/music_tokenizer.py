@@ -38,8 +38,8 @@ class MusicTokenizer():
         self.pad_token_compound = [self.pad_token for _ in range(6)] 
 
 
-        self.sos_onset = [0 for _ in range(self.onset_vocab_size-2)] + [1, 0]
-        self.eos_onset = [0 for _ in range(self.onset_vocab_size-2)] + [0, 1]
+        self.sos_onset = [0, 1] + [0 for _ in range(self.onset_vocab_size-2)] 
+        self.eos_onset = [1, 0] + [0 for _ in range(self.onset_vocab_size-2)]
 
         self.sos_dur, self.eos_dur = self.dur_vocab_size-2, self.dur_vocab_size-1
         self.sos_octave, self.eos_octave = self.octave_vocab_size-2, self.octave_vocab_size-1
@@ -51,7 +51,12 @@ class MusicTokenizer():
         self.sos_label = self.sos_onset+ [self.sos_dur, self.sos_octave, self.sos_pitch_class, self.sos_instrument, self.sos_velocity] 
         self.eos_label = self.eos_onset+ [self.eos_dur, self.eos_octave, self.eos_pitch_class, self.eos_instrument, self.eos_velocity]
         
-
+        self.onset_dict = {i: i for i in range(2)}
+        self.duration_dict = {i: i+2 for i in range(self.dur_vocab_size)}
+        self.octave_dict = {i: i+2+self.dur_vocab_size for i in range(self.octave_vocab_size)}
+        self.pitch_dict = {i: i+2+self.dur_vocab_size+self.octave_vocab_size for i in range(self.pitch_class_vocab_size)}
+        self.instrument_dict= {i: i+2+self.dur_vocab_size+self.octave_vocab_size+self.pitch_class_vocab_size for i in range(self.instrument_vocab_size)}
+        self.velocity_dict = {i: i+2+self.dur_vocab_size+self.octave_vocab_size+self.pitch_class_vocab_size + self.instrument_vocab_size for i in range(self.velocity_vocab_size)}
     
     def encode_single(self, raw_token):
         """
@@ -100,7 +105,26 @@ class MusicTokenizer():
             output = torch.concat([torch.tensor(self.sos_label).unsqueeze(0), output], dim = 0) 
         if if_added_eos:
             output = torch.concat([output, torch.tensor(self.eos_label).unsqueeze(0)], dim = 0) 
-        return output.tolist()
+        output = output.tolist() 
+
+        #4. encode it to labels 
+        labels = [self.convert_to_language_tokens(x) for x in output]
+        return labels
+
+    def convert_to_language_tokens(self, x):
+        """
+        x looks like [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1024, 11, 12, 129, 128]
+        """
+        out = []
+        for i in range(self.onset_vocab_size):
+            out.append(self.onset_dict[x[i]]) #essentially this replicates onset bits
+        
+        out.append(self.duration_dict[x[self.onset_vocab_size]])
+        out.append(self.octave_dict[x[self.onset_vocab_size+1]])  
+        out.append(self.pitch_dict[x[self.onset_vocab_size+2]])
+        out.append(self.instrument_dict[x[self.onset_vocab_size+3]])
+        out.append(self.velocity_dict[x[self.onset_vocab_size+4]])
+        return out
 
     @staticmethod
     def binary_to_decimal_batch(binary):
