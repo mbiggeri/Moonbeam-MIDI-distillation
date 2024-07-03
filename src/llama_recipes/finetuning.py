@@ -73,12 +73,13 @@ def setup_wandb(train_config, fsdp_config, llama_config, **kwargs):
     config_json = json.dumps(config_dict, indent=4)
     
     # Get the wandb run directory
-    wandb_run_dir = run.dir
-    
+    from pathlib import Path
     # Define the file path within the wandb run directory
-    config_file_path = os.path.join(wandb_run_dir, 'llama_config.json')
-    print(f"creating output dir:{train_config.output_dir}")
-    os.makedirs(train_config.output_dir, exist_ok=True)
+    folder_name = (train_config.dist_checkpoint_root_folder+ "/"+ train_config.dist_checkpoint_folder+ "-"+ train_config.model_name)
+    save_dir = Path.cwd() / folder_name
+    save_dir.mkdir(parents=True, exist_ok=True)
+    config_file_path = os.path.join(save_dir, 'llama_config.json')
+
     # Write the JSON string to the file
     with open(config_file_path, 'w') as f:
         f.write(config_json)
