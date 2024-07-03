@@ -704,18 +704,7 @@ class CausalLMOutputWithPast(ModelOutput):
     """
 
     loss: Optional[torch.FloatTensor] = None
-    onset_loss: Optional[torch.FloatTensor] = None
-    duration_loss: Optional[torch.FloatTensor] = None
-    octave_loss: Optional[torch.FloatTensor] = None
-    pitch_loss: Optional[torch.FloatTensor] = None
-    instrument_loss: Optional[torch.FloatTensor] = None
-    velocity_loss: Optional[torch.FloatTensor] = None
-    onset_logits: torch.FloatTensor = None
-    duration_logits: torch.FloatTensor = None
-    octave_logits: torch.FloatTensor = None
-    pitch_logits: torch.FloatTensor = None
-    instrument_logits: torch.FloatTensor = None
-    velocity_logits: torch.FloatTensor = None
+    generation_logits: torch.FloatTensor = None
     logits: Optional[torch.FloatTensor] = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
