@@ -136,11 +136,6 @@ class LlamaConfig(PretrainedConfig):
         attention_bias=False,
         attention_dropout=0.0,
         mlp_bias=False,
-        onset_embedding = {"method": "FME", "dim":128, "base":89021},
-        dur_embedding =  {"method": "FME", "dim":128, "base":89022},
-        pitch_embedding =  {"method": "FME", "dim":128, "base":89023},
-        instrument_embedding =  {"method": "WE", "dim":128, "vocab_size": 129},
-        velocity_embedding = {"method": "FME", "dim":128, "base":89024},
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -166,11 +161,6 @@ class LlamaConfig(PretrainedConfig):
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
         self.mlp_bias = mlp_bias
-        self.onset_embedding = onset_embedding
-        self.dur_embedding = dur_embedding
-        self.pitch_embedding = pitch_embedding
-        self.instrument_embedding = instrument_embedding
-        self.velocity_embedding = velocity_embedding
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
