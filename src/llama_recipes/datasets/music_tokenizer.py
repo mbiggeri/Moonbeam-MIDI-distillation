@@ -57,7 +57,15 @@ class MusicTokenizer():
         self.pitch_dict = {i: i+2+self.dur_vocab_size+self.octave_vocab_size for i in range(self.pitch_class_vocab_size)}
         self.instrument_dict= {i: i+2+self.dur_vocab_size+self.octave_vocab_size+self.pitch_class_vocab_size for i in range(self.instrument_vocab_size)}
         self.velocity_dict = {i: i+2+self.dur_vocab_size+self.octave_vocab_size+self.pitch_class_vocab_size + self.instrument_vocab_size for i in range(self.velocity_vocab_size)}
-    
+        print(f"self.onset_dict:{self.onset_dict}, self.duration_dict:{self.duration_dict},self.octave_dict:{self.octave_dict}, self.pitch_dict:{self.pitch_dict}, self.instrument_dict:{self.instrument_dict} self.velocity_dict:{self.velocity_dict}")
+        self.onset_dict_decode = {v: k for k, v in self.onset_dict.items()}
+        self.duration_dict_decode = {v: k for k, v in self.duration_dict.items()}
+        self.octave_dict_decode = {v: k for k, v in self.octave_dict.items()}
+        self.pitch_dict_decode = {v: k for k, v in self.pitch_dict.items()}
+        self.instrument_dict_decode = {v: k for k, v in self.instrument_dict.items()}
+        self.velocity_dict_decode = {v: k for k, v in self.velocity_dict.items()}
+
+        # print(f"self.onset_dict_decode:{self.onset_dict_decode}, self.duration_dict_decode:{self.duration_dict_decode},self.octave_dict_decode:{self.octave_dict_decode}, self.pitch_dict_decode:{self.pitch_dict_decode}, self.instrument_dict_decode:{self.instrument_dict_decode} self.velocity_dict_decode:{self.velocity_dict_decode}")
     def encode_single(self, raw_token):
         """
         each raw token looks like: [onset_binary_str, duration, [octave, pitch_class],instrument, velocity], ['00000001101100111101', 25, [4, 11], 24, 58] 
@@ -124,6 +132,28 @@ class MusicTokenizer():
         out.append(self.pitch_dict[x[self.onset_vocab_size+2]])
         out.append(self.instrument_dict[x[self.onset_vocab_size+3]])
         out.append(self.velocity_dict[x[self.onset_vocab_size+4]])
+        return out
+
+    def convert_from_language_tokens(self, inp): #TODO: think of a better name!
+        """
+        x looks like [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1024, 11, 12, 129, 128] TODO: this is ugly! fix this
+        """
+        out = []
+        for x in inp: #(batch, 1, vocab)
+            if x[0]==1 or x[1]==1:
+                print("this is SOS and EOS")
+                continue
+            else:
+                onset_bits = x[:self.onset_vocab_size] 
+            onset = self.binary_to_decimal_batch(onset_bits).item()
+            duration = self.duration_dict_decode[x[self.onset_vocab_size].item()]
+            octave = self.octave_dict_decode[x[self.onset_vocab_size+1].item()]
+            pitch = self.pitch_dict_decode[x[self.onset_vocab_size+2].item()]
+            instrument = self.instrument_dict_decode[x[self.onset_vocab_size+3].item()]
+            velocity = self.velocity_dict_decode[x[self.onset_vocab_size+4].item()]
+            # print(f"onset:{onset}, duration:{duration}, octave:{octave}.pitch:{pitch}, instrument:{instrument},  velocity{velocity}")
+            out.append([onset, duration, octave, pitch, instrument, velocity])
+
         return out
 
     @staticmethod
