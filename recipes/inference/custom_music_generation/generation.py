@@ -246,61 +246,91 @@ class MusicLlama:
         #Test out inference without KV cache
         for cur_pos in range(min_prompt_len, total_len): 
             print(f"input ids: {tokens[:, prev_pos:cur_pos]}, attn mask: {input_mask.long()[:, prev_pos:cur_pos, 0]}")
+            #first generate summary 
             output = self.model.forward(input_ids = tokens[:, prev_pos:cur_pos], use_cache = None, attention_mask = torch.zeros_like(tokens[:, prev_pos:cur_pos]).unsqueeze(-1))
-            if temperature > 0:
-                onset_probs = torch.sigmoid(output.onset_logits[:, -1]/ temperature) 
-                duration_probs = torch.softmax(output.duration_logits[:, -1]/ temperature, dim=-1) 
-                octave_probs = torch.softmax(output.octave_logits[:, -1]/ temperature, dim=-1) 
-                pitch_probs = torch.softmax(output.pitch_logits[:, -1]/ temperature, dim=-1) 
-                instrument_probs = torch.softmax(output.instrument_logits[:, -1]/ temperature, dim=-1)  
-                velocity_probs = torch.softmax(output.velocity_logits[:, -1]/ temperature, dim=-1) 
 
-                next_onset_token_bits = torch.bernoulli(onset_probs)
-                next_duration_token = sample_top_p(duration_probs, top_p)
-                next_onset_token = self.tokenizer.binary_to_decimal_batch(next_onset_token_bits).to(next_duration_token)
+            #second generate tokens autoregressively
+            next_decoder_token = None
+            for _ in range(27): #22 onset bits + duration + octave + pitch + instrument + velocity
+                output_decoder = self.model.forward(input_ids_encoded = output.logits[:, -1, :] , decoded_language_tokens = next_decoder_token, attention_mask = None) #here attention mask?
+                generation_logits = output_decoder.generation_logits #batch, len, dim
+                # print(f"generation_logits:{generation_logits.shape}, {generation_logits} next_decoder_token:{next_decoder_token}")
+                if temperature > 0:
+                    probs = torch.softmax(generation_logits[:, -1, : ]/ temperature, dim=-1)  #TODO: test if this is correct: last_hidden_state or all_hidden_state
+                    prediction = sample_top_p(probs, top_p)
+                    if next_decoder_token is not None:
+                        next_decoder_token = torch.cat([next_decoder_token, prediction], dim=-1) #batch, 1, 6, 
+                    else:
+                        next_decoder_token = prediction
+                else:
+                    probs = torch.softmax(generation_logits[:, -1, :], dim=-1)  #batch, 1, dim         TODO: test if this is correct: last_hidden_state or all_hidden_state
+                    # print(f"probs {probs} ")
 
-                next_octave_token = sample_top_p(octave_probs, top_p)
-                next_pitch_token = sample_top_p(pitch_probs, top_p)
-                next_instrument_token = sample_top_p(instrument_probs, top_p)
-                next_velocity_token = sample_top_p(velocity_probs, top_p)
-                next_token = torch.cat([next_onset_token, next_duration_token, next_octave_token, next_pitch_token,next_instrument_token,next_velocity_token  ], dim=-1) #batch, 1, 6, 
+                    prediction = probs.argmax(dim=-1, keepdim=True)
+                    print(f"prediction:{prediction}")
+                    if next_decoder_token is not None:
+                        next_decoder_token = torch.cat([next_decoder_token, prediction], dim=-1) #batch, 1, 6, 
+                    else:
+                        next_decoder_token = prediction
+
+
+            # #TODO: how to forward? 
+            # if temperature > 0:
+            #     onset_probs = torch.sigmoid(output.onset_logits[:, -1]/ temperature) 
+            #     duration_probs = torch.softmax(output.duration_logits[:, -1]/ temperature, dim=-1) 
+            #     octave_probs = torch.softmax(output.octave_logits[:, -1]/ temperature, dim=-1) 
+            #     pitch_probs = torch.softmax(output.pitch_logits[:, -1]/ temperature, dim=-1) 
+            #     instrument_probs = torch.softmax(output.instrument_logits[:, -1]/ temperature, dim=-1)  
+            #     velocity_probs = torch.softmax(output.velocity_logits[:, -1]/ temperature, dim=-1) 
+
+            #     next_onset_token_bits = torch.bernoulli(onset_probs)
+            #     next_duration_token = sample_top_p(duration_probs, top_p)
+            #     next_onset_token = self.tokenizer.binary_to_decimal_batch(next_onset_token_bits).to(next_duration_token)
+
+            #     next_octave_token = sample_top_p(octave_probs, top_p)
+            #     next_pitch_token = sample_top_p(pitch_probs, top_p)
+            #     next_instrument_token = sample_top_p(instrument_probs, top_p)
+            #     next_velocity_token = sample_top_p(velocity_probs, top_p)
+            #     next_token = torch.cat([next_onset_token, next_duration_token, next_octave_token, next_pitch_token,next_instrument_token,next_velocity_token  ], dim=-1) #batch, 1, 6, 
                 
-            else:
-                onset_probs = torch.sigmoid(output.onset_logits[:, -1]) 
-                duration_probs = torch.softmax(output.duration_logits[:, -1], dim=-1) 
-                octave_probs = torch.softmax(output.octave_logits[:, -1], dim=-1) 
-                pitch_probs = torch.softmax(output.pitch_logits[:, -1], dim=-1) 
-                instrument_probs = torch.softmax(output.instrument_logits[:, -1], dim=-1)  
-                velocity_probs = torch.softmax(output.velocity_logits[:, -1], dim=-1) 
-                # print(f"onset_probs:{onset_probs}, duration_probs:{duration_probs}, octave_probs:{octave_probs}, pitch_probs:{pitch_probs}, instrument_probs:{instrument_probs}, velocity_probs:{velocity_probs}")
-                # Sample the token with the highest probability (greedy sampling)
-                next_onset_token_bits = (onset_probs > 0.5).float()  # Assuming binary decision for onset
-                next_duration_token = duration_probs.argmax(dim=-1, keepdim=True)
-                next_onset_token = self.tokenizer.binary_to_decimal_batch(next_onset_token_bits).to(next_duration_token)
+            # else:
+            #     onset_probs = torch.sigmoid(output.onset_logits[:, -1]) 
+            #     duration_probs = torch.softmax(output.duration_logits[:, -1], dim=-1) 
+            #     octave_probs = torch.softmax(output.octave_logits[:, -1], dim=-1) 
+            #     pitch_probs = torch.softmax(output.pitch_logits[:, -1], dim=-1) 
+            #     instrument_probs = torch.softmax(output.instrument_logits[:, -1], dim=-1)  
+            #     velocity_probs = torch.softmax(output.velocity_logits[:, -1], dim=-1) 
+            #     # print(f"onset_probs:{onset_probs}, duration_probs:{duration_probs}, octave_probs:{octave_probs}, pitch_probs:{pitch_probs}, instrument_probs:{instrument_probs}, velocity_probs:{velocity_probs}")
+            #     # Sample the token with the highest probability (greedy sampling)
+            #     next_onset_token_bits = (onset_probs > 0.5).float()  # Assuming binary decision for onset
+            #     next_duration_token = duration_probs.argmax(dim=-1, keepdim=True)
+            #     next_onset_token = self.tokenizer.binary_to_decimal_batch(next_onset_token_bits).to(next_duration_token)
 
-                next_octave_token = octave_probs.argmax(dim=-1, keepdim=True)
-                next_pitch_token = pitch_probs.argmax(dim=-1, keepdim=True)
-                next_instrument_token = instrument_probs.argmax(dim=-1, keepdim=True)
-                next_velocity_token = velocity_probs.argmax(dim=-1, keepdim=True)
-                # print(f"next_onset_token_bits:{next_onset_token_bits}, next_duration_token:{next_duration_token}, next_onset_token:{next_onset_token}, next_octave_token:{next_octave_token}, next_pitch_token:{next_pitch_token}, next_instrument_token:{next_instrument_token}. next_velocity_token:{next_velocity_token}")
+            #     next_octave_token = octave_probs.argmax(dim=-1, keepdim=True)
+            #     next_pitch_token = pitch_probs.argmax(dim=-1, keepdim=True)
+            #     next_instrument_token = instrument_probs.argmax(dim=-1, keepdim=True)
+            #     next_velocity_token = velocity_probs.argmax(dim=-1, keepdim=True)
+            #     # print(f"next_onset_token_bits:{next_onset_token_bits}, next_duration_token:{next_duration_token}, next_onset_token:{next_onset_token}, next_octave_token:{next_octave_token}, next_pitch_token:{next_pitch_token}, next_instrument_token:{next_instrument_token}. next_velocity_token:{next_velocity_token}")
 
-                # Concatenate the sampled tokens
-                next_token = torch.cat([
-                    next_onset_token,   # assuming next_onset_token is scalar
-                    next_duration_token,  # assuming next_duration_token is scalar
-                    next_octave_token,   # assuming next_octave_token is scalar
-                    next_pitch_token,   # assuming next_pitch_token is scalar
-                    next_instrument_token,   # assuming next_instrument_token is scalar
-                    next_velocity_token,   # assuming next_velocity_token is scalar
-                ], dim=-1)
+            #     # Concatenate the sampled tokens
+            #     next_token = torch.cat([
+            #         next_onset_token,   # assuming next_onset_token is scalar
+            #         next_duration_token,  # assuming next_duration_token is scalar
+            #         next_octave_token,   # assuming next_octave_token is scalar
+            #         next_pitch_token,   # assuming next_pitch_token is scalar
+            #         next_instrument_token,   # assuming next_instrument_token is scalar
+            #         next_velocity_token,   # assuming next_velocity_token is scalar
+            #     ], dim=-1)
 
-                # next_token = torch.argmax(logits[:, -1], dim=-1)
-    
+            #     # next_token = torch.argmax(logits[:, -1], dim=-1)
+            next_decoder_token = self.tokenizer.convert_from_language_tokens(next_decoder_token)
+            next_decoder_token = torch.tensor(next_decoder_token).to(tokens)
+            print(f"next_decoder_token:{next_decoder_token}") #TODO: convert this to input format 
 
             next_token = torch.where(
-                input_mask[:, cur_pos], tokens[:, cur_pos], next_token
+                input_mask[:, cur_pos], tokens[:, cur_pos], next_decoder_token
             ) 
-            tokens[:, cur_pos] = next_token
+            tokens[:, cur_pos] = next_decoder_token
             # print("check next token",next_onset_token, next_duration_token, next_octave_token, next_pitch_token, next_instrument_token, next_velocity_token)
 
         assert 1==2
