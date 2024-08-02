@@ -1560,9 +1560,12 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         output_decoder_config= {k: v for k, v in config.decoder.items()}
         decoder_config = LlamaConfig.from_dict(output_decoder_config)
         self.decoder = LlamaOutputDecoder(decoder_config)
-        self.decoder_embedding = nn.Embedding(config.decode_vocab_size, config.hidden_size)
 
-        self.lm_head = nn.Linear(config.hidden_size, config.decode_vocab_size, bias=False) 
+        #TODO: add projection layer to shrink the size! nn.Embedding(config.decode_vocab_size, config.decoder.hidden_size)
+        self.decoder_embedding = nn.Embedding(config.decode_vocab_size, config.decoder["hidden_size"])
+        self.summary_projection = nn.Linear(config.hidden_size, config.decoder["hidden_size"], bias=False) 
+        #TODO: add projection layer to shrink the size! nn.Embedding(config.decoder.hidden_size, config.decode_vocab_size)
+        self.lm_head = nn.Linear(config.decoder["hidden_size"], config.decode_vocab_size, bias=False) 
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -1597,6 +1600,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         past_key_values_decoder: Optional[Union[Cache, List[torch.FloatTensor]]] = None, #TODO: add another cache for decoder
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
+		decoded_language_tokens: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -1655,10 +1659,10 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
             assert False, "You cannot provide input_ids and input_ids_encoded at the same time!"
    
         logits = hidden_states
-
+        logits_shrinked = self.summary_projection(logits) #batch, len, dim --> batch, len, decoder_hidden_size
         loss = None
         if labels is not None: #if label exists: during training/evaluation --> teacher forcing, return loss;
-            shift_logits_x = logits[..., :-1, :].contiguous() #batch, len_x-1, dim
+            shift_logits_x = logits_shrinked[..., :-1, :].contiguous() #batch, len_x-1, dim
             shift_labels_x = labels[..., 1:, :].contiguous().to(logits.device)
 
             # 1. get the "SOS" token for each decoding step
@@ -1693,9 +1697,36 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
             loss = loss_func(generation_logits, shift_labels_x)
 
         else: #else during inference --> inference autoregressively, return generated tokens
-            generation_logits = None #TODO! 
+            
+            shift_logits_x = logits_shrinked.contiguous() #batch, len_x, dim
 
-            return 
+            # 1. get the "SOS" token for each decoding step
+            music_summary = shift_logits_x.view(-1, shift_logits_x.shape[-1]).unsqueeze(1) #batch*(len_x-1), 1, dim 
+            
+            #2. concat decoded tokens with intermediate "SOS" tokens
+            if decoded_language_tokens is not None:
+                shift_labels_x = decoded_language_tokens.view(-1, decoded_language_tokens.shape[-1]) #batch*1, len_y
+                
+                shift_labels_x_encoded = self.decoder_embedding(shift_labels_x) #batch*1, len_y, dim
+                decoder_input = torch.concat([music_summary, shift_labels_x_encoded], dim = 1) #batch*(len_x-1), 1+len_y, dim
+
+            else:
+            
+                decoder_input = music_summary 
+
+            generation_logits = self.decoder(
+                input_ids=None,
+                attention_mask=None, #TODO test if masked properly
+                position_ids=None,
+                past_key_values=None,
+                inputs_embeds=decoder_input, 
+                use_cache=False,
+                output_attentions=False,
+                output_hidden_states=False,
+                return_dict=False,
+                cache_position=None)
+            generation_logits= self.lm_head(generation_logits[0])
+            generation_logits = generation_logits.float()
 
         #final todo: return logits intermediate, loss, and decoded tokens 
         
@@ -1703,15 +1734,24 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         if not return_dict:
             output = (logits,generation_logits) + outputs[1:]
             return (loss, logits) + output if loss is not None else output 
-
-        return CausalLMOutputWithPast(
-            loss=loss,
-            logits=logits,
-            generation_logits=generation_logits,
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions, 
-        )
+        if input_ids is not None and input_ids_encoded is None: #during training and evaluation
+            return CausalLMOutputWithPast(
+                loss=loss,
+                logits=logits,
+                generation_logits=generation_logits,
+                past_key_values=outputs.past_key_values,
+                hidden_states=outputs.hidden_states,
+                attentions=outputs.attentions, 
+            )
+        else: #during inference
+            return CausalLMOutputWithPast(
+                loss=loss,
+                logits=logits,
+                generation_logits=generation_logits,
+                past_key_values=None,
+                hidden_states=None,
+                attentions=None, 
+            )        
 
     def prepare_inputs_for_generation(
         self,
