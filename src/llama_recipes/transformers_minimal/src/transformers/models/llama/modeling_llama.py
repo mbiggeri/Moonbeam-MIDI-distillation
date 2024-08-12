@@ -1668,11 +1668,11 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
             # 1. get the "SOS" token for each decoding step
             music_summary = shift_logits_x.view(-1, shift_logits_x.shape[-1]).unsqueeze(1) #batch*(len_x-1), 1, dim 
             
-            #2. shift the labels and concat with intermediate "SOS" tokens
+            #2. shift the labels and concat with intermediate "SOS" tokens: music summary
             shift_labels_x = shift_labels_x.view(-1, shift_labels_x.shape[-1]) #batch*(len_x-1), onset_vocab_size + dur_size + .. + vel_size / batch*(len_x-1), len_y
             
-            shift_labels_x_encoded = self.decoder_embedding(shift_labels_x) #batch*(len_x-1), len_y, dim
-            shift_labels_x_y_encoded = shift_labels_x_encoded[:, :-1 ,:] #batch*(len_x-1), len_y-1, dim
+
+            shift_labels_x_y_encoded = self.decoder_embedding(shift_labels_x[:, :-1]) #batch*(len_x-1), len_y-1, dim
             decoder_input = torch.concat([music_summary, shift_labels_x_y_encoded], dim = 1) #batch*(len_x-1), len_y, dim
 
 
