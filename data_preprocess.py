@@ -51,19 +51,30 @@ def process_midi_file(midi_file, onset_vocab_size, dur_vocab_size, output_folder
         compounds = MusicTokenizer().midi_to_compound(midi_file)
 
         #Filter out files with large onsets or durations
-        onsets_counter = Counter([math.ceil(math.log2(c[0])) if c[0] != 0 else 1 for c in compounds])
+        # onsets_counter = Counter([math.ceil(math.log2(c[0])) if c[0] != 0 else 1 for c in compounds])
+        onsets = [c[0] for c in compounds]
+        onsets_padded = [0] + onsets
+        timeshift_counter = Counter([onsets_padded[i+1] - onsets_padded[i] for i in range(len(onsets_padded) - 1)]) 
         duration_counter = Counter([c[1] for c in compounds])
 
         # Check if any key in onsets_counter is larger than onset_vocab_size
-        onsets_exceed_vocab_size = any(key > onset_vocab_size-1 for key in onsets_counter.keys())
+        onsets_exceed_vocab_size = any(key > onset_vocab_size-3 for key in timeshift_counter.keys()) #TODO: this should be called timeshift vocab size really 
 
         # Check if any key in duration_counter is larger than dur_vocab_size
-        duration_exceed_vocab_size = any(key > dur_vocab_size-1 for key in duration_counter.keys()) #if dur_vocab_size=1026, largest value allowed should be 1025
+        duration_exceed_vocab_size = any(key > dur_vocab_size-3 for key in duration_counter.keys()) #if dur_vocab_size=1026, 1024 and 1025 are reserved for sos and eos, the largest value becomes 1023 = dur_vocab_size
 
         if onsets_exceed_vocab_size or duration_exceed_vocab_size:
             with open(log_file, 'a') as log:
                 log.write(f'Failed to process {midi_file}:\n')
                 log.write(f'{midi_file} contains large onsets: {onsets_exceed_vocab_size}, large durations: {duration_exceed_vocab_size}\n')
+                # Optionally, print the largest onset and duration exceeding the vocab size
+                if onsets_exceed_vocab_size:
+                    largest_onset = max(key for key in timeshift_counter.keys() if key > onset_vocab_size - 3)
+                    log.write(f'Largest onset: {largest_onset}\n')
+                if duration_exceed_vocab_size:
+                    largest_duration = max(key for key in duration_counter.keys() if key > dur_vocab_size - 3)
+                    log.write(f'Largest duration: {largest_duration}\n')
+
             return None
         #save to npy or flat t5
         # output_file_folder = os.path.join(output_folder, midi_file.split("/")[1:-1])
@@ -79,7 +90,7 @@ def process_midi_file(midi_file, onset_vocab_size, dur_vocab_size, output_folder
                 hf.create_dataset('compounds', data=np.array(compounds))
         return {
             'file': output_file_path,
-            'onsets':onsets_counter,
+            'onsets':timeshift_counter,
             'durations':duration_counter,           
             'length': len(compounds)
         }
