@@ -1345,6 +1345,11 @@ class LlamaModel(LlamaPreTrainedModel):
         self.velocity_embedding = EMBEDDING_METHODS[config.velocity_embedding['method']](dim = emb_size, **{k: v for k, v in config.velocity_embedding.items() if k != 'method'})
         
         self.supplementary_embedding = nn.Embedding(2, config.hidden_size) #one for sos and one for eos
+        self.supplementary_MLP = nn.Sequential(
+            nn.Linear(config.hidden_size, config.hidden_size //2 ),
+            nn.ReLU(),              # Activation function
+            nn.Linear(config.hidden_size//2 , config.hidden_size)
+        )   
 
         # self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.layers = nn.ModuleList(
@@ -1384,7 +1389,12 @@ class LlamaModel(LlamaPreTrainedModel):
         out_fme_sos = torch.where(where_sos, sos, out_fme) #batch, len, 1; batch, 1, dim; batch, len, dim
         
         out_fme_sos_eos = torch.where(where_eos, eos, out_fme_sos)
-        return out_fme_sos_eos
+
+        #Additional non-linearity to the embeddings
+
+        out_final = self.supplementary_MLP(out_fme_sos_eos)
+
+        return out_final
     def get_input_embeddings(self):
         return None
 
