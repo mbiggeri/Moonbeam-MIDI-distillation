@@ -39,7 +39,9 @@ class MusicTokenizer():
 
         #define labels (language tokens)
         self.sos_timeshift, self.eos_timeshift = self.timeshift_vocab_size-2, self.timeshift_vocab_size-1 #TODO think whether this is correct
-        self.sos_dur, self.eos_dur = self.dur_vocab_size-2, self.dur_vocab_size-1
+        # self.sos_dur, self.eos_dur = self.dur_vocab_size-2, self.dur_vocab_size-1
+        self.sos_dur, self.eos_dur = 1025, 1026 #TODO: very ugly fix!!
+
         self.sos_octave, self.eos_octave = self.octave_vocab_size-2, self.octave_vocab_size-1
         self.sos_pitch_class, self.eos_pitch_class = self.pitch_class_vocab_size-2, self.pitch_class_vocab_size-1
         self.sos_instrument, self.eos_instrument = self.instrument_vocab_size-2, self.instrument_vocab_size-1
@@ -51,8 +53,11 @@ class MusicTokenizer():
         
         # self.onset_dict = {i: i for i in range(2)}
         self.timeshift_dict = {i: i for i in range(self.timeshift_vocab_size)}
-        self.duration_dict = {i: i+self.timeshift_vocab_size for i in range(self.dur_vocab_size)}
+        # self.duration_dict = {i: i+self.timeshift_vocab_size for i in range(self.dur_vocab_size)} #linear scale
+        self.duration_dict = self.create_dur_dictionary() #log scale
         self.octave_dict = {i: i+self.timeshift_vocab_size+self.dur_vocab_size for i in range(self.octave_vocab_size)}
+        # print(f"self.timeshift_dict:{self.timeshift_dict}, self.duration_dict:{self.duration_dict}, self.octave_dict:{self.octave_dict}")
+        
         self.pitch_dict = {i: i+self.timeshift_vocab_size+self.dur_vocab_size+self.octave_vocab_size for i in range(self.pitch_class_vocab_size)}
         self.instrument_dict= {i: i+self.timeshift_vocab_size+self.dur_vocab_size+self.octave_vocab_size+self.pitch_class_vocab_size for i in range(self.instrument_vocab_size)}
         self.velocity_dict = {i: i+self.timeshift_vocab_size+self.dur_vocab_size+self.octave_vocab_size+self.pitch_class_vocab_size + self.instrument_vocab_size for i in range(self.velocity_vocab_size)}
@@ -157,6 +162,35 @@ class MusicTokenizer():
 
         return out
 
+    def create_dur_dictionary(self):
+        """Create a duration dictionary to map duration values to tokens in log scale."""
+        dur_vocab_size_wo_soseos = self.dur_vocab_size - 2
+        bin_width=10/dur_vocab_size_wo_soseos #assume duration ranges from 10ms to 10240ms 
+        # Generate bin boundaries
+        bin_boundaries = [2 ** (i * bin_width) for i in range(dur_vocab_size_wo_soseos + 1)]
+
+        # Create dictionary to map tokens to bins
+        token_to_bin = {}
+
+        for token in range(1, 1025):  # Tokens from 1 to 1024
+            # Determine which bin this token falls into
+            for bin_num in range(dur_vocab_size_wo_soseos):
+                if bin_boundaries[bin_num] <= token < bin_boundaries[bin_num + 1]:
+                    token_to_bin[token] = bin_num + self.timeshift_vocab_size
+
+                    break
+
+        # Handle the last token
+        # token_to_bin[1024] = dur_vocab_size_wo_soseos - 1 
+        token_to_bin[1024] = dur_vocab_size_wo_soseos - 1 + self.timeshift_vocab_size
+
+        #Add SOS and EOS dur 
+        # print(f"sos_dur:{self.sos_dur + self.timeshift_vocab_size}, eos_dur:{self.eos_dur + self.timeshift_vocab_size}")
+        token_to_bin[self.sos_dur] = self.dur_vocab_size - 2 + self.timeshift_vocab_size #VERY UGLY FIX
+        token_to_bin[self.eos_dur] = self.dur_vocab_size - 1 + self.timeshift_vocab_size
+
+        return token_to_bin
+
     @staticmethod
     def binary_to_decimal_batch(binary):
         """
@@ -252,6 +286,8 @@ class MusicTokenizer():
                             print('WARNING: ignoring bad offset') #note with offset but without onset
                     else:
                         duration_ticks = round(TIME_RESOLUTION*(time-onset_time))
+                        if duration_ticks==0: #happens in 20% of the file, note duration is zero, replace these with the smallest duration allowed: 10ms
+                            duration_ticks = 1
                         tokens[open_idx][1] = duration_ticks
                         #del open_notes[(instr,message.note,message.channel)]
             elif message.type == 'set_tempo':
@@ -292,15 +328,19 @@ class MusicTokenizer():
     @staticmethod
     def compound_to_midi(tokens, TIME_RESOLUTION = 100, debug=False):
         #TODO: double check and add doc string
+        """
+        tokens: npy array with shape (len, 6)
+        """
         mid = mido.MidiFile()
         mid.ticks_per_beat = TIME_RESOLUTION // 2 # 2 beats/second at quarter=120
 
-        it = iter(tokens)
         time_index = defaultdict(list)
-        for _, (time_in_ticks,duration,note,instrument,velocity) in enumerate(zip(it,it,it,it,it)):
+
+        for _, (row) in enumerate(tokens):
+            time_in_ticks,duration,octave, pitch ,instrument,velocity = row
+            note = octave_pitch_class_to_pitch(octave, pitch)
             time_index[(time_in_ticks,0)].append((note, instrument, velocity)) # 0 = onset
             time_index[(time_in_ticks+duration,1)].append((note, instrument, velocity)) # 1 = offset
-
         track_idx = {} # maps instrument to (track number, current time)
         num_tracks = 0
         for time_in_ticks, event_type in sorted(time_index.keys()):
