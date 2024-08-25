@@ -35,6 +35,7 @@ midi_folder = '/data/scratch/acw753/lakhmidi'
 
 progress_log_file = f'{save_folder}/progress.txt'
 dataset_name = "Lakhmidi"
+MAX_DURATION = 1024
 
 # Function to find all MIDI files under a folder
 def find_midi_files(folder):
@@ -45,55 +46,11 @@ def find_midi_files(folder):
                 midi_files.append(os.path.join(root, file))
     return midi_files
 
-def process_midi_file(midi_file, onset_vocab_size, dur_vocab_size, output_folder, log_file, save_format = "npy"):
+
+
+def process_midi_file_safe(midi_file, onset_vocab_size, dur_vocab_size, output_folder, log_file, save_format = "npy"):
     try:
-        # Analyze the MIDI file
-        compounds = MusicTokenizer().midi_to_compound(midi_file)
-
-        #Filter out files with large onsets or durations
-        # onsets_counter = Counter([math.ceil(math.log2(c[0])) if c[0] != 0 else 1 for c in compounds])
-        onsets = [c[0] for c in compounds]
-        onsets_padded = [0] + onsets
-        timeshift_counter = Counter([onsets_padded[i+1] - onsets_padded[i] for i in range(len(onsets_padded) - 1)]) 
-        duration_counter = Counter([c[1] for c in compounds])
-
-        # Check if any key in onsets_counter is larger than onset_vocab_size
-        onsets_exceed_vocab_size = any(key > onset_vocab_size-3 for key in timeshift_counter.keys()) #TODO: this should be called timeshift vocab size really 
-
-        # Check if any key in duration_counter is larger than dur_vocab_size
-        duration_exceed_vocab_size = any(key > dur_vocab_size-3 for key in duration_counter.keys()) #if dur_vocab_size=1026, 1024 and 1025 are reserved for sos and eos, the largest value becomes 1023 = dur_vocab_size
-
-        if onsets_exceed_vocab_size or duration_exceed_vocab_size:
-            with open(log_file, 'a') as log:
-                log.write(f'Failed to process {midi_file}:\n')
-                log.write(f'{midi_file} contains large onsets: {onsets_exceed_vocab_size}, large durations: {duration_exceed_vocab_size}\n')
-                # Optionally, print the largest onset and duration exceeding the vocab size
-                if onsets_exceed_vocab_size:
-                    largest_onset = max(key for key in timeshift_counter.keys() if key > onset_vocab_size - 3)
-                    log.write(f'Largest onset: {largest_onset}\n')
-                if duration_exceed_vocab_size:
-                    largest_duration = max(key for key in duration_counter.keys() if key > dur_vocab_size - 3)
-                    log.write(f'Largest duration: {largest_duration}\n')
-
-            return None
-        #save to npy or flat t5
-        # output_file_folder = os.path.join(output_folder, midi_file.split("/")[1:-1])
-        # os.makedirs(output_file_folder, exist_ok = True)                              
-        output_file_name = midi_file.split("/")[-1].replace('.mid', f'.{save_format}')
-        output_file_path = os.path.join(output_folder, output_file_name)
-        if os.path.isfile(output_file_path):
-            print(f"warning... {output_file_path} already exists")
-        if save_format == "npy":
-            np.save(output_file_path, np.array(compounds))
-        elif save_format == "h5":
-            with h5py.File(output_file_path, 'w') as hf:
-                hf.create_dataset('compounds', data=np.array(compounds))
-        return {
-            'file': output_file_path,
-            'onsets':timeshift_counter,
-            'durations':duration_counter,           
-            'length': len(compounds)
-        }
+        return process_midi_file(midi_file, onset_vocab_size, dur_vocab_size, output_folder, log_file, save_format)
     except Exception as e:
         # Log failure with full traceback
         with open(log_file, 'a') as log:
@@ -102,9 +59,55 @@ def process_midi_file(midi_file, onset_vocab_size, dur_vocab_size, output_folder
             log.write('\n')
         return None
 
+def process_midi_file(midi_file, onset_vocab_size, dur_vocab_size, output_folder, log_file, save_format = "npy"):
+    # Analyze the MIDI file
+    compounds = MusicTokenizer().midi_to_compound(midi_file)
 
+    #Filter out files with large onsets or durations
+    # onsets_counter = Counter([math.ceil(math.log2(c[0])) if c[0] != 0 else 1 for c in compounds])
+    onsets = [c[0] for c in compounds]
+    onsets_padded = [0] + onsets
+    timeshift_counter = Counter([onsets_padded[i+1] - onsets_padded[i] for i in range(len(onsets_padded) - 1)]) 
+    duration_counter = Counter([c[1] for c in compounds])
 
+    # Check if any key in onsets_counter is larger than onset_vocab_size
+    onsets_exceed_vocab_size = any(key > onset_vocab_size-3 for key in timeshift_counter.keys()) #TODO: this should be called timeshift vocab size really 
 
+    # Check if any key in duration_counter is larger than dur_vocab_size
+    duration_exceed_vocab_size = any(key > MAX_DURATION for key in duration_counter.keys()) #if dur_vocab_size=1026, 1024 and 1025 are reserved for sos and eos, the largest value becomes 1023 = dur_vocab_size
+
+    if onsets_exceed_vocab_size or duration_exceed_vocab_size:
+        with open(log_file, 'a') as log:
+            log.write(f'Failed to process {midi_file}:\n')
+            log.write(f'{midi_file} contains large onsets: {onsets_exceed_vocab_size}, large durations: {duration_exceed_vocab_size}\n')
+            # Optionally, print the largest onset and duration exceeding the vocab size
+            if onsets_exceed_vocab_size:
+                largest_onset = max(key for key in timeshift_counter.keys() if key > onset_vocab_size - 3)
+                log.write(f'Largest onset: {largest_onset}\n')
+            if duration_exceed_vocab_size:
+                largest_duration = max(key for key in duration_counter.keys() if key > dur_vocab_size - 3)
+                log.write(f'Largest duration: {largest_duration}\n')
+
+        return None
+    #save to npy or flat t5
+    # output_file_folder = os.path.join(output_folder, midi_file.split("/")[1:-1])
+    # os.makedirs(output_file_folder, exist_ok = True)                              
+    output_file_name = midi_file.split("/")[-1].replace('.mid', f'.{save_format}')
+    output_file_path = os.path.join(output_folder, output_file_name)
+    if os.path.isfile(output_file_path):
+        print(f"warning... {output_file_path} already exists")
+    if save_format == "npy":
+        print("saving to npy", output_file_path)
+        np.save(output_file_path, np.array(compounds))
+    elif save_format == "h5":
+        with h5py.File(output_file_path, 'w') as hf:
+            hf.create_dataset('compounds', data=np.array(compounds))
+    return {
+        'file': output_file_path,
+        'onsets':timeshift_counter,
+        'durations':duration_counter,           
+        'length': len(compounds)
+    }
 
 
 def analyze_and_plot_beta0(success_data):
@@ -558,7 +561,7 @@ if __name__ == '__main__':
     
     #process all midi files
     with ProcessPoolExecutor(max_workers=num_cores) as executor:
-        results = list(tqdm(executor.map(process_midi_file, midi_files, [onset_vocab_size]*len(midi_files), [dur_vocab_size]*len(midi_files), [midi_output_folder]*len(midi_files), [log_file]*len(midi_files), [args.save_format]*len(midi_files)), total=len(midi_files), desc='Processing MIDI files'))
+        results = list(tqdm(executor.map(process_midi_file_safe, midi_files, [onset_vocab_size]*len(midi_files), [dur_vocab_size]*len(midi_files), [midi_output_folder]*len(midi_files), [log_file]*len(midi_files), [args.save_format]*len(midi_files)), total=len(midi_files), desc='Processing MIDI files'))
 
     success_data = []
     failures = 0
