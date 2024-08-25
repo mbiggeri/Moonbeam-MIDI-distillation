@@ -1577,6 +1577,21 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         #TODO: add projection layer to shrink the size! nn.Embedding(config.decoder.hidden_size, config.decode_vocab_size)
         self.lm_head = nn.Linear(config.decoder["hidden_size"], config.decode_vocab_size, bias=False) 
 
+
+        # # Initialize weights array with ones
+        # weights = torch.ones(self.config.decode_vocab_size)
+
+        # # Set weight for onset=0 to 0.5
+        # weights[0] = 0.5
+
+        # # Set weight for the rest of the classes to 1.0
+        # weights[1:] = 1.0
+        # weights = weights.float()
+        # print(f"check weight? {weights.dtype}") #torch.float32
+        # self.loss_func = CrossEntropyLoss(weight=weights)
+        
+        self.loss_func = CrossEntropyLoss()
+
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -1703,8 +1718,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
 
             generation_logits = generation_logits.view(-1, self.config.decode_vocab_size)
             shift_labels_x = shift_labels_x.view(-1)
-            loss_func = CrossEntropyLoss()
-            loss = loss_func(generation_logits, shift_labels_x)
+            loss = self.loss_func(generation_logits, shift_labels_x)
 
         else: #else during inference --> inference autoregressively, return generated tokens
             
