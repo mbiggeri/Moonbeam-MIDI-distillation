@@ -551,11 +551,12 @@ class LlamaAttentionBaseline(nn.Module):
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
-        self.rope_theta_onset = config.rope_theta_onset
+        """        self.rope_theta_onset = config.rope_theta_onset
         self.rope_theta_dur = config.rope_theta_dur
         self.rope_theta_octave = config.rope_theta_octave
         self.rope_theta_pitch = config.rope_theta_pitch
-        self.rope_theta_velocity = config.rope_theta_velocity
+        self.rope_theta_velocity = config.rope_theta_velocity"""
+        self.rope_theta = config.rope_theta
         self.is_causal = True
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
@@ -572,7 +573,12 @@ class LlamaAttentionBaseline(nn.Module):
 
     def _init_rope(self):
         if self.config.rope_scaling is None:
-            self.rotary_emb_onset = LlamaRotaryEmbedding(
+            self.rotary_emb = LlamaRotaryEmbedding(
+                self.head_dim,
+                max_position_embeddings=self.max_position_embeddings,
+                base=self.rope_theta,
+            )
+            """            self.rotary_emb_onset = LlamaRotaryEmbedding(
                 self.head_dim,
                 max_position_embeddings=self.max_position_embeddings,
                 base=self.rope_theta_onset,
@@ -596,7 +602,7 @@ class LlamaAttentionBaseline(nn.Module):
                 self.head_dim,
                 max_position_embeddings=self.max_position_embeddings,
                 base=self.rope_theta_velocity,
-            )
+            )"""
         else:
             scaling_type = self.config.rope_scaling["type"]
             scaling_factor = self.config.rope_scaling["factor"]
@@ -1012,7 +1018,7 @@ class LlamaSdpaAttention(LlamaAttention):
 
         return attn_output, None, past_key_value
 
-class LlamaSdpaAttentionBaseline(LlamaAttention):
+class LlamaSdpaAttentionBaseline(LlamaAttentionBaseline):
     """
     Llama attention module using torch.nn.functional.scaled_dot_product_attention. This module inherits from
     `LlamaAttention` as the weights of the module stays untouched. The only changes are on the forward pass to adapt to
@@ -1059,7 +1065,7 @@ class LlamaSdpaAttentionBaseline(LlamaAttention):
         #different heads carry different information: first group of heads: onset; second group of heads: duration; third group of head: pitch so on and so forth
         #TODO: modify positions_id such that sos is assigned with pos 0 and eos is assigned with pos 2 ** config.onset_vocab
         
-        where_sos = (position_ids[..., 0] == self.config.sos_token).unsqueeze(-1) #only check the onset dimension  
+        """        where_sos = (position_ids[..., 0] == self.config.sos_token).unsqueeze(-1) #only check the onset dimension  
         where_eos = (position_ids[..., 0] == self.config.eos_token).unsqueeze(-1) 
         
         #Since SOS and EOS are negative number, temporarily change it to 0 to avoid indexing error
@@ -1071,9 +1077,10 @@ class LlamaSdpaAttentionBaseline(LlamaAttention):
         cos_dur, sin_dur = self.rotary_emb_dur(value_states, position_ids[:, :, 1]) 
         cos_octave, sin_octave = self.rotary_emb_octave(value_states, position_ids[:, :, 2]) 
         cos_pitch, sin_pitch = self.rotary_emb_pitch(value_states, position_ids[:, :, 3]) 
-        cos_velocity, sin_velocity = self.rotary_emb_pitch(value_states, position_ids[:, :, 5]) 
+        cos_velocity, sin_velocity = self.rotary_emb_pitch(value_states, position_ids[:, :, 5]) """
+        cos, sin = self.rotary_emb(value_states, position_ids)
 
-        query_states_split = query_states.view(bsz, 6, -1, q_len, self.head_dim) #(bsz, 6, head_q/6, len, dim) 
+        """query_states_split = query_states.view(bsz, 6, -1, q_len, self.head_dim) #(bsz, 6, head_q/6, len, dim) 
         key_states_split = key_states.view(bsz, 6, -1, q_len, self.head_dim)#(bsz, 6, head_kv/6, len, dim)
         
         query_states_onset, key_states_onset = apply_rotary_pos_emb(query_states_split[:,0,:,:,:], key_states_split[:,0,:,:,:], cos_onset, sin_onset)  #apply to head group 0
@@ -1084,7 +1091,9 @@ class LlamaSdpaAttentionBaseline(LlamaAttention):
         query_states_velocity, key_states_velocity = apply_rotary_pos_emb(query_states_split[:,5,:,:,:], key_states_split[:,5,:,:,:], cos_velocity, sin_velocity) #apply to head group 5
 
         query_states = torch.cat((query_states_onset, query_states_dur, query_states_octave, query_states_pitch, query_states_instr, query_states_velocity), dim = 1) #concat all the heads
-        key_states = torch.cat((key_states_onset, key_states_dur, key_states_octave, key_states_pitch, key_states_instr, key_states_velocity), dim = 1) #(bsz, head_kv, len, dim)
+        key_states = torch.cat((key_states_onset, key_states_dur, key_states_octave, key_states_pitch, key_states_instr, key_states_velocity), dim = 1) #(bsz, head_kv, len, dim)"""
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
 
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
