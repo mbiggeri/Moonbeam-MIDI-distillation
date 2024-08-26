@@ -763,7 +763,7 @@ class PretrainedConfig(PushToHubMixin):
             kwargs["_commit_hash"] = config_dict["_commit_hash"]
 
         # We remove it from kwargs so that it does not appear in `return_unused_kwargs`.
-        config_dict["attn_implementation"] = kwargs.pop("attn_implementation", None)
+        # config_dict["attn_implementation"] = kwargs.pop("attn_implementation", None) #VERY DANGEROUS!REMOVE IT FOR THE BASELINE MODELS
 
         config = cls(**config_dict)
 
