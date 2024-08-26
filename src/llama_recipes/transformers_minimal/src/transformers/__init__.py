@@ -2287,6 +2287,7 @@ else:
     _import_structure["models.llama"].extend(
         [
             "LlamaForCausalLM",
+            "LlamaForCausalLM_Baseline",
             "LlamaForQuestionAnswering",
             "LlamaForSequenceClassification",
             "LlamaModel",
@@ -6691,6 +6692,7 @@ if TYPE_CHECKING:
         )
         from .models.llama import (
             LlamaForCausalLM,
+            LlamaForCausalLM_Baseline,
             LlamaForQuestionAnswering,
             LlamaForSequenceClassification,
             LlamaModel,

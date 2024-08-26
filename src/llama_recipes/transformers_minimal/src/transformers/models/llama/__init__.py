@@ -51,6 +51,7 @@ except OptionalDependencyNotAvailable:
 else:
     _import_structure["modeling_llama"] = [
         "LlamaForCausalLM",
+        "LlamaForCausalLM_Baseline",
         "LlamaModel",
         "LlamaPreTrainedModel",
         "LlamaForSequenceClassification",
