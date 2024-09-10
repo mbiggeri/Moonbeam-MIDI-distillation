@@ -29,7 +29,9 @@ class MusicTokenizer():
         self.pitch_class_vocab_size = pitch_class_vocab_size
         self.instrument_vocab_size = instrument_vocab_size
         self.velocity_vocab_size = velocity_vocab_size
-        
+        self.sos_out_vocab_size = 1 #sos token at the output side, only 1 token
+        self.sos_out = 0
+
         self.sos_token = sos_token
         self.eos_token = eos_token
         self.pad_token = pad_token
@@ -39,8 +41,8 @@ class MusicTokenizer():
 
         #define labels (language tokens)
         self.sos_timeshift, self.eos_timeshift = self.timeshift_vocab_size-2, self.timeshift_vocab_size-1 #TODO think whether this is correct
-        # self.sos_dur, self.eos_dur = self.dur_vocab_size-2, self.dur_vocab_size-1
-        self.sos_dur, self.eos_dur = 1025, 1026 #TODO: very ugly fix!!
+        self.sos_dur, self.eos_dur = self.dur_vocab_size-2, self.dur_vocab_size-1
+        # self.sos_dur, self.eos_dur = 1025, 1026 #TODO: very ugly fix!! #IF CONVERT TO LINEAR THEN HAVE TO CHANGE THIS BACK 
 
         self.sos_octave, self.eos_octave = self.octave_vocab_size-2, self.octave_vocab_size-1
         self.sos_pitch_class, self.eos_pitch_class = self.pitch_class_vocab_size-2, self.pitch_class_vocab_size-1
@@ -48,20 +50,21 @@ class MusicTokenizer():
         self.sos_velocity, self.eos_velocity = self.velocity_vocab_size-2, self.velocity_vocab_size-1
 
 
-        self.sos_label = [self.sos_timeshift, self.sos_dur, self.sos_octave, self.sos_pitch_class, self.sos_instrument, self.sos_velocity]
-        self.eos_label = [self.eos_timeshift, self.eos_dur, self.eos_octave, self.eos_pitch_class, self.eos_instrument, self.eos_velocity]
+        self.sos_label = [self.sos_out, self.sos_timeshift, self.sos_dur, self.sos_octave, self.sos_pitch_class, self.sos_instrument, self.sos_velocity]
+        self.eos_label = [self.sos_out, self.eos_timeshift, self.eos_dur, self.eos_octave, self.eos_pitch_class, self.eos_instrument, self.eos_velocity]
         
         # self.onset_dict = {i: i for i in range(2)}
-        self.timeshift_dict = {i: i for i in range(self.timeshift_vocab_size)}
-        # self.duration_dict = {i: i+self.timeshift_vocab_size for i in range(self.dur_vocab_size)} #linear scale
-        self.duration_dict = self.create_dur_dictionary() #log scale
-        self.octave_dict = {i: i+self.timeshift_vocab_size+self.dur_vocab_size for i in range(self.octave_vocab_size)}
-        # print(f"self.timeshift_dict:{self.timeshift_dict}, self.duration_dict:{self.duration_dict}, self.octave_dict:{self.octave_dict}")
+        self.sos_out_dict = {i: i for i in range(self.sos_out_vocab_size)}
+        self.timeshift_dict = {i: i+self.sos_out_vocab_size for i in range(self.timeshift_vocab_size)}
+        self.duration_dict = {i: i+self.sos_out_vocab_size+self.timeshift_vocab_size for i in range(self.dur_vocab_size)} #linear scale
+        self.octave_dict = {i: i+self.sos_out_vocab_size+self.timeshift_vocab_size+self.dur_vocab_size for i in range(self.octave_vocab_size)}
         
-        self.pitch_dict = {i: i+self.timeshift_vocab_size+self.dur_vocab_size+self.octave_vocab_size for i in range(self.pitch_class_vocab_size)}
-        self.instrument_dict= {i: i+self.timeshift_vocab_size+self.dur_vocab_size+self.octave_vocab_size+self.pitch_class_vocab_size for i in range(self.instrument_vocab_size)}
-        self.velocity_dict = {i: i+self.timeshift_vocab_size+self.dur_vocab_size+self.octave_vocab_size+self.pitch_class_vocab_size + self.instrument_vocab_size for i in range(self.velocity_vocab_size)}
-        # print(f"self.timeshift_dict:{self.timeshift_dict}, self.duration_dict:{self.duration_dict},self.octave_dict:{self.octave_dict}, self.pitch_dict:{self.pitch_dict}, self.instrument_dict:{self.instrument_dict} self.velocity_dict:{self.velocity_dict}")
+        self.pitch_dict = {i: i+self.sos_out_vocab_size+self.timeshift_vocab_size+self.dur_vocab_size+self.octave_vocab_size for i in range(self.pitch_class_vocab_size)}
+        self.instrument_dict= {i: i+self.sos_out_vocab_size+self.timeshift_vocab_size+self.dur_vocab_size+self.octave_vocab_size+self.pitch_class_vocab_size for i in range(self.instrument_vocab_size)}
+        self.velocity_dict = {i: i+self.sos_out_vocab_size+self.timeshift_vocab_size+self.dur_vocab_size+self.octave_vocab_size+self.pitch_class_vocab_size + self.instrument_vocab_size for i in range(self.velocity_vocab_size)}
+        print(f"self.sos_out_dict:{self.sos_out_dict}, self.timeshift_dict:{self.timeshift_dict}, self.duration_dict:{self.duration_dict},self.octave_dict:{self.octave_dict}, self.pitch_dict:{self.pitch_dict}, self.instrument_dict:{self.instrument_dict} self.velocity_dict:{self.velocity_dict}")
+        
+        self.sos_out_dict_decode = {v: k for k, v in self.sos_out_dict.items()}
         self.timeshift_dict_decode = {v: k for k, v in self.timeshift_dict.items()}
         self.duration_dict_decode = {v: k for k, v in self.duration_dict.items()}
         self.octave_dict_decode = {v: k for k, v in self.octave_dict.items()}
@@ -117,8 +120,10 @@ class MusicTokenizer():
         #2. Concat the raw value
         """
         output = torch.concat([onsets_labels, other_labels], dim = -1) #(len, onset_vocab_size+5)"""
-        output = torch.cat([timeshift_labels_raw.unsqueeze(-1), encoded_tokens[:, 1:]], dim = -1) #(len, 6) #TODO: check if this is correct, ensure there is no time shift < 0
+        output = torch.cat([torch.zeros(encoded_tokens.shape[0]).unsqueeze(-1) , timeshift_labels_raw.unsqueeze(-1), encoded_tokens[:, 1:]], dim = -1) #(len, 6) #TODO: check if this is correct, ensure there is no time shift < 0
         # print(f"output:{output[:5]}")
+
+        """add sos_out token at the beginning"""
         #3. Add sos and eos label if necessary
         if if_added_sos: 
             output = torch.concat([torch.tensor(self.sos_label).unsqueeze(0), output], dim = 0) 
@@ -137,20 +142,23 @@ class MusicTokenizer():
         out = []
         # for i in range(self.onset_vocab_size):
         #     out.append(self.onset_dict[x[i]]) #essentially this replicates onset bits
-        out.append(self.timeshift_dict[x[0]])
-        out.append(self.duration_dict[x[1]])
-        out.append(self.octave_dict[x[2]])  
-        out.append(self.pitch_dict[x[3]])
-        out.append(self.instrument_dict[x[4]])
-        out.append(self.velocity_dict[x[5]])
+        out.append(self.sos_out_dict[x[0]])
+        out.append(self.timeshift_dict[x[1]])
+        out.append(self.duration_dict[x[2]])
+        out.append(self.octave_dict[x[3]])  
+        out.append(self.pitch_dict[x[4]])
+        out.append(self.instrument_dict[x[5]])
+        out.append(self.velocity_dict[x[6]])
         return out
     def convert_from_language_tokens(self, inp): 
         """
         x looks like [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1024, 11, 12, 129, 128]
         x looks like [time_shift, time_shift+1024, time_shift+1024+11, ...]
         """
+        original_shape = inp.shape
+        inp_flattened = inp.view(-1, original_shape[-1])
         out = []
-        for x in inp: #(batch, vocab)
+        for x in inp_flattened: #(batch, vocab)
             timeshift = self.timeshift_dict_decode[x[0].item()]
             duration = self.duration_dict_decode[x[1].item()]
             octave = self.octave_dict_decode[x[2].item()]
@@ -159,7 +167,8 @@ class MusicTokenizer():
             velocity = self.velocity_dict_decode[x[5].item()]
             # print(f"onset:{onset}, duration:{duration}, octave:{octave}.pitch:{pitch}, instrument:{instrument},  velocity{velocity}")
             out.append([timeshift, duration, octave, pitch, instrument, velocity])
-
+        out = torch.tensor(out)
+        out = out.view(*original_shape[:-1], -1)
         return out
 
     def create_dur_dictionary(self):
@@ -176,18 +185,18 @@ class MusicTokenizer():
             # Determine which bin this token falls into
             for bin_num in range(dur_vocab_size_wo_soseos):
                 if bin_boundaries[bin_num] <= token < bin_boundaries[bin_num + 1]:
-                    token_to_bin[token] = bin_num + self.timeshift_vocab_size
+                    token_to_bin[token] = bin_num + self.timeshift_vocab_size + self.sos_out_vocab_size
 
                     break
 
         # Handle the last token
         # token_to_bin[1024] = dur_vocab_size_wo_soseos - 1 
-        token_to_bin[1024] = dur_vocab_size_wo_soseos - 1 + self.timeshift_vocab_size
+        token_to_bin[1024] = dur_vocab_size_wo_soseos - 1 + self.timeshift_vocab_size + self.sos_out_vocab_size
 
         #Add SOS and EOS dur 
         # print(f"sos_dur:{self.sos_dur + self.timeshift_vocab_size}, eos_dur:{self.eos_dur + self.timeshift_vocab_size}")
-        token_to_bin[self.sos_dur] = self.dur_vocab_size - 2 + self.timeshift_vocab_size #VERY UGLY FIX
-        token_to_bin[self.eos_dur] = self.dur_vocab_size - 1 + self.timeshift_vocab_size
+        token_to_bin[self.sos_dur] = self.dur_vocab_size - 2 + self.timeshift_vocab_size + self.sos_out_vocab_size #VERY UGLY FIX
+        token_to_bin[self.eos_dur] = self.dur_vocab_size - 1 + self.timeshift_vocab_size + self.sos_out_vocab_size
 
         return token_to_bin
 
