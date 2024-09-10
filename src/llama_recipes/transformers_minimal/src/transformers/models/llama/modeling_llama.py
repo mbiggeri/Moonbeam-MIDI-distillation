@@ -1860,6 +1860,8 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
 
         output_decoder_config= {k: v for k, v in config.decoder.items()}
         decoder_config = LlamaConfig.from_dict(output_decoder_config)
+        self.decoder_attn_implementation = decoder_config._attn_implementation
+        self.decoder = DECODING_METHODS[decoder_config._attn_implementation](decoder_config)
         self.decoder = LlamaOutputDecoder(decoder_config)
 
         #TODO: add projection layer to shrink the size! nn.Embedding(config.decode_vocab_size, config.decoder.hidden_size)
@@ -1917,6 +1919,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
 		decoded_language_tokens: Optional[torch.LongTensor] = None,
+        decoded_hidden_state: Optional[torch.LongTensor] = None, #batch, len, dim
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -1955,7 +1958,7 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         #outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-        if input_ids is not None and input_ids_encoded is None: #training/evaluation
+        if input_ids is not None and decoded_hidden_state is None: #training/evaluation
             outputs = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -1974,46 +1977,78 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         else:
             assert False, "You cannot provide input_ids and input_ids_encoded at the same time!"
    
-        logits = hidden_states
-        logits_shrinked = self.summary_projection(logits) #batch, len, dim --> batch, len, decoder_hidden_size
+            logits = hidden_states
+            logits_shrinked = self.summary_projection(hidden_states) #batch, len, dim --> batch, len, decoder_hidden_size
+
+        elif input_ids is None and decoded_hidden_state is not None: #inference
+            hidden_states = decoded_hidden_state
+        else:
+            print("warning You cannot provide input_ids and input_ids_encoded at the same time!", )
+            # assert False, "You cannot provide input_ids and input_ids_encoded at the same time!"
+        logits = None
         loss = None
+        generation_logits = None
         if labels is not None: #if label exists: during training/evaluation --> teacher forcing, return loss;
             shift_logits_x = logits_shrinked[..., :-1, :].contiguous() #batch, len_x-1, dim
-            shift_labels_x = labels[..., 1:, :].contiguous().to(logits.device)
+            shift_labels_x = labels[..., 1:, :].contiguous().to(logits_shrinked.device)
 
-            # 1. get the "SOS" token for each decoding step
-            music_summary = shift_logits_x.view(-1, shift_logits_x.shape[-1]).unsqueeze(1) #batch*(len_x-1), 1, dim 
+            if self.decoder_attn_implementation == "output": #DANGEROURS: here shift labels does not contain SOS_decoding token 
+                # 1. get the "SOS" token for each decoding step
+                music_summary = shift_logits_x.view(-1, shift_logits_x.shape[-1]).unsqueeze(1) #batch*(len_x-1), 1, dim 
+                
+                #2. shift the labels and concat with intermediate "SOS" tokens: music summary
+                shift_labels_x = shift_labels_x.view(-1, shift_labels_x.shape[-1]) #batch*(len_x-1), onset_vocab_size + dur_size + .. + vel_size / batch*(len_x-1), len_y
+                
+
+                shift_labels_x_y_encoded = self.decoder_embedding(shift_labels_x[:, :-1]) #batch*(len_x-1), len_y-1, dim
+                decoder_input = torch.concat([music_summary, shift_labels_x_y_encoded], dim = 1) #batch*(len_x-1), len_y, dim
+
+
+                generation_logits = self.decoder(
+                    input_ids=None,
+                    attention_mask=None, 
+                    position_ids=None,
+                    past_key_values=None,
+                    inputs_embeds=decoder_input,
+                    use_cache=False,
+                    output_attentions=False,
+                    output_hidden_states=False,
+                    return_dict=False,
+                    cache_position=None)
+            elif self.decoder_attn_implementation == "MLP": #DANGEROURS: here shift labels does not contain SOS_decoding token 
+
+                music_summary = shift_logits_x.view(-1, shift_logits_x.shape[-1]) #batch*(len_x-1), dim 
+                generation_logits = self.decoder(music_summary) #batch*(len_x-1), len_y*dim 
+                generation_logits = generation_logits.view(music_summary.shape[0], shift_labels_x.shape[-1], -1) #batch*(len_x-1), len_y, decode_vocab_size
+                generation_logits = [generation_logits]
             
-            #2. shift the labels and concat with intermediate "SOS" tokens: music summary
-            shift_labels_x = shift_labels_x.view(-1, shift_labels_x.shape[-1]) #batch*(len_x-1), onset_vocab_size + dur_size + .. + vel_size / batch*(len_x-1), len_y
-            
+            elif self.decoder_attn_implementation == "GRU": #DANGEROURS: here shift labels contain SOS_decoding token / does not need EOS?
+                shift_logits_x_flattened = shift_logits_x.view(-1, shift_logits_x.shape[-1]) #batch*(len_x-1), dim 
+                shift_labels_x_flattened = shift_labels_x.view(-1, shift_labels_x.shape[-1]) #batch*(len_x-1), onset_vocab_size + dur_size + .. + vel_size / batch*(len_x-1), len_y
+                
+                shift_labels_x_y = shift_labels_x_flattened[:, 1:].contiguous() #batch*(len_x-1), len_y-1(1:)
+                
+                shift_labels_x_y_encoded = self.decoder_embedding(shift_labels_x_flattened[:, :-1]) #batch*(len_x-1), len_y-1(:-1), dim
+                generation_logits, _ = self.decoder(shift_labels_x_y_encoded, shift_logits_x_flattened.unsqueeze(0).expand(self.decoder.num_hidden_layers, -1, -1)) #batch*(len_x-1), len_y-1, decode_vocab_size
 
-            shift_labels_x_y_encoded = self.decoder_embedding(shift_labels_x[:, :-1]) #batch*(len_x-1), len_y-1, dim
-            decoder_input = torch.concat([music_summary, shift_labels_x_y_encoded], dim = 1) #batch*(len_x-1), len_y, dim
+                generation_logits = [generation_logits]
 
+            elif self.decoder_attn_implementation == "LSTM": #DANGEROURS: here shift labels contain SOS_decoding token 
+                print("not yet implemented")
 
-            generation_logits = self.decoder(
-                input_ids=None,
-                attention_mask=None, 
-                position_ids=None,
-                past_key_values=None,
-                inputs_embeds=decoder_input,
-                use_cache=False,
-                output_attentions=False,
-                output_hidden_states=False,
-                return_dict=False,
-                cache_position=None)
-
-            generation_logits= self.lm_head(generation_logits[0])
-            generation_logits = generation_logits.float()
-
-            generation_logits = generation_logits.view(-1, self.config.decode_vocab_size)
-            shift_labels_x = shift_labels_x.view(-1)
-            loss = self.loss_func(generation_logits, shift_labels_x)
-
-        else: #else during inference --> inference autoregressively, return generated tokens
-            
-            shift_logits_x = logits_shrinked.contiguous() #batch, len_x, dim
+            generation_logits= self.lm_head(generation_logits[0]).float().view(-1, self.config.decode_vocab_size)
+            shift_labels_x_y = shift_labels_x_y.view(-1)
+            loss = self.loss_func(generation_logits, shift_labels_x_y)
+        elif decoded_language_tokens is not None and decoded_hidden_state is not None: #else during inference (decoding)--> inference autoregressively, return generated tokens
+            if self.decoder_attn_implementation == "GRU":              
+                decoded_language_tokens_encoded = self.decoder_embedding(decoded_language_tokens)##batch*len_x, len_y--> batch*lenx, len_y, dim
+                generation_logits_flattened, generation_hidden_state_flattened = self.decoder(decoded_language_tokens_encoded, decoded_hidden_state) #output: batch*len_x, len_y, dim ,  hidden state: num_layers, batch*len_x, dim
+                
+                generation_logits = generation_logits_flattened.view(decoded_language_tokens_encoded.shape[0],decoded_language_tokens_encoded.shape[1], -1) #batch*len_x, len_y, decode_vocab_size
+                generation_hidden_state = generation_hidden_state_flattened.view(self.decoder.num_hidden_layers, decoded_language_tokens_encoded.shape[0], -1) #num_layers, batch*len_x, dim
+                generation_logits= self.lm_head(generation_logits)
+                generation_logits = generation_logits.float()
+                logits_shrinked = None
 
             # 1. get the "SOS" token for each decoding step
             music_summary = shift_logits_x.view(-1, shift_logits_x.shape[-1]).unsqueeze(1) #batch*(len_x-1), 1, dim 
@@ -2396,6 +2431,84 @@ class LlamaModelBaseline(LlamaPreTrainedModel):
             attention_mask = (attention_mask_rep == attention_mask_rep.transpose(1, 2)) 
             attention_mask = attention_mask.unsqueeze(1) #unsqueeze in head dimension: batch, len, len
             return attention_mask 
+
+
+class OutputMLP(nn.Module):
+    def __init__(self, config):
+        super(OutputMLP, self).__init__()
+        hidden_size = config.hidden_size
+        num_hidden_layers = config.num_hidden_layers
+        self.input_size = hidden_size
+        self.output_size = 6*hidden_size
+        self.hidden_size = hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        
+        # Create a list to hold all layers
+        layers = []
+        
+        # Input layer
+        layers.append(nn.Linear(self.input_size, hidden_size))
+        layers.append(nn.ReLU())
+        
+        # Hidden layers
+        for _ in range(num_hidden_layers - 1):
+            layers.append(nn.Linear(hidden_size, hidden_size))
+            layers.append(nn.ReLU())
+        
+        # Output layer
+        layers.append(nn.Linear(hidden_size, self.output_size))
+        
+        # Combine all layers into a sequential model
+        self.model = nn.Sequential(*layers)
+    
+    def forward(self, x):
+        return self.model(x)
+
+class OutputLSTM(nn.Module):
+    def __init__(self, config):
+        super(OutputLSTM, self).__init__()
+
+        hidden_size = config.hidden_size
+        output_size = config.hidden_size
+        num_hidden_layers = config.num_hidden_layers
+        self.num_hidden_layers = num_hidden_layers
+        self.lstm = nn.LSTM(output_size, hidden_size, num_layers=num_hidden_layers, batch_first=True)
+        self.fc_out = nn.Linear(hidden_size, hidden_size)
+
+    def forward(self, x, hidden, cell):
+        # x: [batch_size, seq_len, output_dim]
+        # hidden: [batch_size, hidden_dim]
+        # cell: [batch_size, hidden_dim]
+        output, (hidden, cell) = self.lstm(x, (hidden, cell))
+        logits = self.fc_out(output)  # [batch_size, seq_len, output_dim]
+        return logits, hidden, cell
+
+class OutputGRU(nn.Module):
+    def __init__(self, config):
+        super(OutputGRU, self).__init__()
+
+        hidden_size = config.hidden_size
+        output_size = config.hidden_size
+        num_hidden_layers = config.num_hidden_layers
+        self.num_hidden_layers = num_hidden_layers
+        self.gru = nn.GRU(output_size, hidden_size, num_layers=num_hidden_layers, batch_first=True)
+        self.fc_out = nn.Linear(hidden_size, hidden_size)
+
+    def forward(self, x, hidden):
+        # x: [batch_size, seq_len, output_dim]
+        # hidden: [num_layers, batch_size, hidden_dim] 
+        # cell: [batch_size, hidden_dim]
+        output, hidden = self.gru(x, hidden)
+        logits = self.fc_out(output)  # [batch_size, seq_len, output_dim]
+        return logits, hidden
+
+DECODING_METHODS = {
+    "output": LlamaOutputDecoder,
+    "MLP": OutputMLP,
+    "LSTM": OutputLSTM,
+    "GRU": OutputGRU
+}
+
 
 class LlamaForCausalLM_Baseline(LlamaPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
