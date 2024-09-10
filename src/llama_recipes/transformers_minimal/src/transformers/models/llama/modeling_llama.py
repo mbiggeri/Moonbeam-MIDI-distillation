@@ -965,7 +965,7 @@ class LlamaSdpaAttention(LlamaAttention):
         cos_dur, sin_dur = self.rotary_emb_dur(value_states, position_ids[:, :, 1]) 
         cos_octave, sin_octave = self.rotary_emb_octave(value_states, position_ids[:, :, 2]) 
         cos_pitch, sin_pitch = self.rotary_emb_pitch(value_states, position_ids[:, :, 3]) 
-        cos_velocity, sin_velocity = self.rotary_emb_pitch(value_states, position_ids[:, :, 5]) 
+        cos_velocity, sin_velocity = self.rotary_emb_velocity(value_states, position_ids[:, :, 5]) 
 
         query_states_split = query_states.view(bsz, 6, -1, q_len, self.head_dim) #(bsz, 6, head_q/6, len, dim) 
         key_states_split = key_states.view(bsz, 6, -1, q_len, self.head_dim)#(bsz, 6, head_kv/6, len, dim)
