@@ -1845,7 +1845,11 @@ class LlamaModel(LlamaPreTrainedModel):
         if len(attention_mask.shape) == 2: #During training or evaluation, attention_mask contains concatenated data
             attention_mask = attention_mask[:, None, :] #batch, 1, len
             attention_mask_rep = attention_mask.expand(-1, attention_mask.shape[2], -1) #batch, len, len
-            attention_mask = (attention_mask_rep == attention_mask_rep.transpose(1, 2)) 
+            block_mask = (attention_mask_rep == attention_mask_rep.transpose(1, 2)) 
+            #Create a causal mask for each block, ensuring tokens only attend to previous tokens in their block
+            seq_len = attention_mask.shape[2]
+            causal_mask = torch.tril(torch.ones((seq_len, seq_len), dtype=torch.bool, device=attention_mask.device))
+            attention_mask = block_mask & causal_mask  # Shape: (batch_size, seq_len, seq_len)
             attention_mask = attention_mask.unsqueeze(1) #unsqueeze in head dimension: batch, len, len
             return attention_mask 
 
