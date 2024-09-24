@@ -177,10 +177,12 @@ class MusicLlama:
             model.to("cuda")
         model.eval()
 
-        tokenizer = MusicTokenizer(onset_vocab_size = llama_config.onset_vocab_size, dur_vocab_size = llama_config.dur_vocab_size, octave_vocab_size = llama_config.octave_vocab_size, pitch_class_vocab_size = llama_config.pitch_class_vocab_size, instrument_vocab_size = llama_config.instrument_vocab_size, velocity_vocab_size = llama_config.velocity_vocab_size)
+        tokenizer = MusicTokenizer(timeshift_vocab_size = llama_config.onset_vocab_size, dur_vocab_size = llama_config.dur_vocab_size, octave_vocab_size = llama_config.octave_vocab_size, pitch_class_vocab_size = llama_config.pitch_class_vocab_size, instrument_vocab_size = llama_config.instrument_vocab_size, velocity_vocab_size = llama_config.velocity_vocab_size)
         
         if torch.cuda.is_bf16_supported():
             torch.set_default_tensor_type(torch.cuda.BFloat16Tensor)
+            model = model.to(torch.bfloat16)  # Explicitly cast the entire model to BF16 precision. TODO: whether or not cast in bf16
+            print("model precision set to BF16")
         else:
             torch.set_default_tensor_type(torch.cuda.HalfTensor)  #this throws me exeptions!  TODO: think what to do about it
 
@@ -243,203 +245,70 @@ class MusicLlama:
         eos_reached = torch.tensor([False] * bsz, device="cuda")
         input_mask = torch.all(tokens != pad_tensor, dim=-1).unsqueeze(-1) #(batch, len, 1)
 
-        #Test out inference without KV cache
-        for cur_pos in range(min_prompt_len, total_len): 
-            print(f"input ids: {tokens[:, prev_pos:cur_pos]}, attn mask: {input_mask.long()[:, prev_pos:cur_pos, 0]}")
-            #first generate summary 
-            output = self.model.forward(input_ids = tokens[:, prev_pos:cur_pos], use_cache = None, attention_mask = torch.zeros_like(tokens[:, prev_pos:cur_pos]).unsqueeze(-1))
-
-            #second generate tokens autoregressively
-            next_decoder_token = None
-            for _ in range(27): #22 onset bits + duration + octave + pitch + instrument + velocity
-                output_decoder = self.model.forward(input_ids_encoded = output.logits[:, -1, :] , decoded_language_tokens = next_decoder_token, attention_mask = None) #here attention mask?
-                generation_logits = output_decoder.generation_logits #batch, len, dim
-                # print(f"generation_logits:{generation_logits.shape}, {generation_logits} next_decoder_token:{next_decoder_token}")
-                if temperature > 0:
-                    probs = torch.softmax(generation_logits[:, -1, : ]/ temperature, dim=-1)  #TODO: test if this is correct: last_hidden_state or all_hidden_state
-                    prediction = sample_top_p(probs, top_p)
-                    if next_decoder_token is not None:
-                        next_decoder_token = torch.cat([next_decoder_token, prediction], dim=-1) #batch, 1, 6, 
-                    else:
-                        next_decoder_token = prediction
-                else:
-                    probs = torch.softmax(generation_logits[:, -1, :], dim=-1)  #batch, 1, dim         TODO: test if this is correct: last_hidden_state or all_hidden_state
-                    # print(f"probs {probs} ")
-
-                    prediction = probs.argmax(dim=-1, keepdim=True)
-                    print(f"prediction:{prediction}")
-                    if next_decoder_token is not None:
-                        next_decoder_token = torch.cat([next_decoder_token, prediction], dim=-1) #batch, 1, 6, 
-                    else:
-                        next_decoder_token = prediction
-
-
-            # #TODO: how to forward? 
-            # if temperature > 0:
-            #     onset_probs = torch.sigmoid(output.onset_logits[:, -1]/ temperature) 
-            #     duration_probs = torch.softmax(output.duration_logits[:, -1]/ temperature, dim=-1) 
-            #     octave_probs = torch.softmax(output.octave_logits[:, -1]/ temperature, dim=-1) 
-            #     pitch_probs = torch.softmax(output.pitch_logits[:, -1]/ temperature, dim=-1) 
-            #     instrument_probs = torch.softmax(output.instrument_logits[:, -1]/ temperature, dim=-1)  
-            #     velocity_probs = torch.softmax(output.velocity_logits[:, -1]/ temperature, dim=-1) 
-
-            #     next_onset_token_bits = torch.bernoulli(onset_probs)
-            #     next_duration_token = sample_top_p(duration_probs, top_p)
-            #     next_onset_token = self.tokenizer.binary_to_decimal_batch(next_onset_token_bits).to(next_duration_token)
-
-            #     next_octave_token = sample_top_p(octave_probs, top_p)
-            #     next_pitch_token = sample_top_p(pitch_probs, top_p)
-            #     next_instrument_token = sample_top_p(instrument_probs, top_p)
-            #     next_velocity_token = sample_top_p(velocity_probs, top_p)
-            #     next_token = torch.cat([next_onset_token, next_duration_token, next_octave_token, next_pitch_token,next_instrument_token,next_velocity_token  ], dim=-1) #batch, 1, 6, 
-                
-            # else:
-            #     onset_probs = torch.sigmoid(output.onset_logits[:, -1]) 
-            #     duration_probs = torch.softmax(output.duration_logits[:, -1], dim=-1) 
-            #     octave_probs = torch.softmax(output.octave_logits[:, -1], dim=-1) 
-            #     pitch_probs = torch.softmax(output.pitch_logits[:, -1], dim=-1) 
-            #     instrument_probs = torch.softmax(output.instrument_logits[:, -1], dim=-1)  
-            #     velocity_probs = torch.softmax(output.velocity_logits[:, -1], dim=-1) 
-            #     # print(f"onset_probs:{onset_probs}, duration_probs:{duration_probs}, octave_probs:{octave_probs}, pitch_probs:{pitch_probs}, instrument_probs:{instrument_probs}, velocity_probs:{velocity_probs}")
-            #     # Sample the token with the highest probability (greedy sampling)
-            #     next_onset_token_bits = (onset_probs > 0.5).float()  # Assuming binary decision for onset
-            #     next_duration_token = duration_probs.argmax(dim=-1, keepdim=True)
-            #     next_onset_token = self.tokenizer.binary_to_decimal_batch(next_onset_token_bits).to(next_duration_token)
-
-            #     next_octave_token = octave_probs.argmax(dim=-1, keepdim=True)
-            #     next_pitch_token = pitch_probs.argmax(dim=-1, keepdim=True)
-            #     next_instrument_token = instrument_probs.argmax(dim=-1, keepdim=True)
-            #     next_velocity_token = velocity_probs.argmax(dim=-1, keepdim=True)
-            #     # print(f"next_onset_token_bits:{next_onset_token_bits}, next_duration_token:{next_duration_token}, next_onset_token:{next_onset_token}, next_octave_token:{next_octave_token}, next_pitch_token:{next_pitch_token}, next_instrument_token:{next_instrument_token}. next_velocity_token:{next_velocity_token}")
-
-            #     # Concatenate the sampled tokens
-            #     next_token = torch.cat([
-            #         next_onset_token,   # assuming next_onset_token is scalar
-            #         next_duration_token,  # assuming next_duration_token is scalar
-            #         next_octave_token,   # assuming next_octave_token is scalar
-            #         next_pitch_token,   # assuming next_pitch_token is scalar
-            #         next_instrument_token,   # assuming next_instrument_token is scalar
-            #         next_velocity_token,   # assuming next_velocity_token is scalar
-            #     ], dim=-1)
-
-            #     # next_token = torch.argmax(logits[:, -1], dim=-1)
-            next_decoder_token = self.tokenizer.convert_from_language_tokens(next_decoder_token)
-            next_decoder_token = torch.tensor(next_decoder_token).to(tokens)
-            print(f"next_decoder_token:{next_decoder_token}") #TODO: convert this to input format 
-
-            next_token = torch.where(
-                input_mask[:, cur_pos], tokens[:, cur_pos], next_decoder_token
-            ) 
-            tokens[:, cur_pos] = next_decoder_token
-            # print("check next token",next_onset_token, next_duration_token, next_octave_token, next_pitch_token, next_instrument_token, next_velocity_token)
-
-        assert 1==2
-
-
+        """KV Cache"""
         past_key_values = None
         for cur_pos in range(min_prompt_len, total_len): #recursively generate new tokens in parallel
-            # if past_key_values is not None:
-            #     print(f"cur_pos:{cur_pos}, prev_pos:{prev_pos}, input_ids: {tokens[:, prev_pos:cur_pos]},past_key_values:{past_key_values[0][0]}") #layer 0 key
-            # else:
-            #     print(f"cur_pos:{cur_pos}, prev_pos:{prev_pos}, input_ids: {tokens[:, prev_pos:cur_pos]} with shape:{tokens[:, prev_pos:cur_pos].shape},past_key_values:{past_key_values}")
-            print(f"input ids: {tokens[:, prev_pos:cur_pos]}")
-            output = self.model.forward(input_ids = tokens[:, prev_pos:cur_pos], past_key_values = past_key_values, use_cache = True, attention_mask = None)
+            print("input to model", tokens[:, prev_pos:cur_pos])
+            output = self.model.forward(input_ids = tokens[:, prev_pos:cur_pos], past_key_values = past_key_values, use_cache = True, attention_mask = None) #output logtis: (batch, len, dim 
+            #KV cache 
+            # print("artificial check!")
+            # output2 = self.model.forward(input_ids = tokens[:, 0:cur_pos], attention_mask = torch.zeros(tokens.shape[0], cur_pos-0) , past_key_values = None, use_cache = None) #output logtis: (batch, len, dim
+            # print(f"{output.logits[:, -1, :]=} {output2.logits[:, -1, :]=}")
+
+            next_decoder_token = torch.tensor(self.tokenizer.sos_out).to(tokens).expand(tokens.shape[0]*(cur_pos - prev_pos), 1) #batch*len_x, len_y = 1
+            next_decoder_token_out = next_decoder_token
+            hidden_state = output.logits  #first forward pass: batch, len_x, dim --> batch*len_x, dim  --> num_layer, batch*len_x, dim; 
+            hidden_state = hidden_state.view(hidden_state.shape[0]*hidden_state.shape[1], hidden_state.shape[2]).unsqueeze(0).expand(self.model.decoder.num_hidden_layers, -1, -1).contiguous() #batch, len_x, dim --> num_layer, batch*len_x, dim; 
+
+            for _ in range(6): 
+                output_decoder = self.model.forward(decoded_hidden_state = hidden_state, decoded_language_tokens = next_decoder_token, attention_mask = None) #here attention mask?
+                generation_logits = output_decoder.generation_logits ##batch*len_x, len_y, decode_vocab_size
+                hidden_state = output_decoder.generation_hidden_state ##num_layers, batch*len_x, dim
+
+                if temperature > 0:
+                    probs = torch.softmax(generation_logits[:, -1, : ]/ temperature, dim=-1) 
+                    next_decoder_token = sample_top_p(probs, top_p)
+                else:
+                    probs = torch.softmax(generation_logits[:, -1, :], dim=-1)  #batch*len_x, len_y (last), decode_vocab_size
+                    next_decoder_token = probs.argmax(dim=-1, keepdim=True) #batch*len_x, 1
+
+                next_decoder_token_out = torch.cat([next_decoder_token_out, next_decoder_token], dim=-1) #batch*len_x, len_y
             
-            if temperature > 0:
-                onset_probs = torch.sigmoid(output.onset_logits[:, -1]/ temperature) 
-                duration_probs = torch.softmax(output.duration_logits[:, -1]/ temperature, dim=-1) 
-                octave_probs = torch.softmax(output.octave_logits[:, -1]/ temperature, dim=-1) 
-                pitch_probs = torch.softmax(output.pitch_logits[:, -1]/ temperature, dim=-1) 
-                instrument_probs = torch.softmax(output.instrument_logits[:, -1]/ temperature, dim=-1)  
-                velocity_probs = torch.softmax(output.velocity_logits[:, -1]/ temperature, dim=-1) 
-
-                next_onset_token_bits = torch.bernoulli(onset_probs)
-                next_duration_token = sample_top_p(duration_probs, top_p)
-                next_onset_token = self.tokenizer.binary_to_decimal_batch(next_onset_token_bits).to(next_duration_token)
-
-                next_octave_token = sample_top_p(octave_probs, top_p)
-                next_pitch_token = sample_top_p(pitch_probs, top_p)
-                next_instrument_token = sample_top_p(instrument_probs, top_p)
-                next_velocity_token = sample_top_p(velocity_probs, top_p)
-                next_token = torch.cat([next_onset_token, next_duration_token, next_octave_token, next_pitch_token,next_instrument_token,next_velocity_token  ], dim=-1) #batch, 1, 6, 
-                
-            else:
-                onset_probs = torch.sigmoid(output.onset_logits[:, -1]) 
-                duration_probs = torch.softmax(output.duration_logits[:, -1], dim=-1) 
-                octave_probs = torch.softmax(output.octave_logits[:, -1], dim=-1) 
-                pitch_probs = torch.softmax(output.pitch_logits[:, -1], dim=-1) 
-                instrument_probs = torch.softmax(output.instrument_logits[:, -1], dim=-1)  
-                velocity_probs = torch.softmax(output.velocity_logits[:, -1], dim=-1) 
-                
-                # Sample the token with the highest probability (greedy sampling)
-                next_onset_token_bits = (onset_probs > 0.5).float()  # Assuming binary decision for onset
-                next_duration_token = duration_probs.argmax(dim=-1, keepdim=True)
-                next_onset_token = self.tokenizer.binary_to_decimal_batch(next_onset_token_bits).to(next_duration_token)
-
-                next_octave_token = octave_probs.argmax(dim=-1, keepdim=True)
-                next_pitch_token = pitch_probs.argmax(dim=-1, keepdim=True)
-                next_instrument_token = instrument_probs.argmax(dim=-1, keepdim=True)
-                next_velocity_token = velocity_probs.argmax(dim=-1, keepdim=True)
-                print(f"check raw:next_onset_token_bits {next_onset_token_bits.shape}, {next_onset_token_bits},next_duration_token {next_duration_token.shape}, {next_duration_token}, next_onset_token {next_onset_token.shape}, {next_onset_token},  next_octave_token{next_octave_token.shape}")
-                # Concatenate the sampled tokens
-                next_token = torch.cat([
-                    next_onset_token,   # assuming next_onset_token is scalar
-                    next_duration_token,  # assuming next_duration_token is scalar
-                    next_octave_token,   # assuming next_octave_token is scalar
-                    next_pitch_token,   # assuming next_pitch_token is scalar
-                    next_instrument_token,   # assuming next_instrument_token is scalar
-                    next_velocity_token,   # assuming next_velocity_token is scalar
-                ], dim=-1)
-
-                
-                print("TODO, implement greedy sampling")
-                # next_token = torch.argmax(logits[:, -1], dim=-1)
-
-            # only replace token if prompt has already been generated
+            #remove the sos_out token 
+            next_decoder_token_out_reshaped = next_decoder_token_out[:, 1:].view(tokens.shape[0], -1 ,6) #batch*len_x, 6 --> batch, len_x, 6
+            next_decoder_token_lang = self.tokenizer.convert_from_language_tokens(next_decoder_token_out_reshaped) #batch, lenx, 6 
+            
+            previous_onset = tokens[:, cur_pos-1, 0] #batch, 
+            new_onset = previous_onset + torch.tensor(next_decoder_token_lang)[:, -1, 0].to(previous_onset) #batch, + batch --> batch
+            next_decoder_token_onset = torch.cat ([new_onset.unsqueeze(-1) ,torch.tensor(next_decoder_token_lang)[:, -1, 1:]],dim=-1).to(tokens) #batch, 1  cat  batch, 5
             next_token = torch.where(
-                input_mask[:, cur_pos], tokens[:, cur_pos], next_token
+                input_mask[:, cur_pos], tokens[:, cur_pos], next_decoder_token_onset
             ) 
             tokens[:, cur_pos] = next_token
-            # print("check next token",next_onset_token, next_duration_token, next_octave_token, next_pitch_token, next_instrument_token, next_velocity_token)
-            # print("check eos condition", torch.isin(next_duration_token, torch.tensor(self.tokenizer.eos_dur)),\
-            #        torch.isin(next_octave_token, torch.tensor(self.tokenizer.eos_octave)),\
-            #         torch.isin(next_pitch_token, torch.tensor(self.tokenizer.eos_pitch_class)) ,\
-            #             torch.isin(next_instrument_token, torch.tensor(self.tokenizer.eos_instrument)), \
-            #             torch.isin(next_velocity_token, torch.tensor(self.tokenizer.eos_velocity))   )
-            
+
+            """check if next token is eos"""
             eos_conditions = (
-                next_onset_token_bits == torch.tensor(self.tokenizer.eos_onset) |
-                torch.isin(next_duration_token, torch.tensor(self.tokenizer.eos_dur)) |
-                torch.isin(next_octave_token, torch.tensor(self.tokenizer.eos_octave)) |
-                torch.isin(next_pitch_token, torch.tensor(self.tokenizer.eos_pitch_class)) |
-                torch.isin(next_instrument_token, torch.tensor(self.tokenizer.eos_instrument)) |
-                torch.isin(next_velocity_token, torch.tensor(self.tokenizer.eos_velocity))
+                next_decoder_token_out_reshaped[:, -1, 0] == torch.tensor(self.tokenizer.eos_timeshift) | #batch, 6
+                torch.isin(next_decoder_token_out_reshaped[:, -1, 1], torch.tensor(self.tokenizer.eos_dur)) | 
+                torch.isin(next_decoder_token_out_reshaped[:, -1, 2], torch.tensor(self.tokenizer.eos_octave)) |
+                torch.isin(next_decoder_token_out_reshaped[:, -1, 3], torch.tensor(self.tokenizer.eos_pitch_class)) |
+                torch.isin(next_decoder_token_out_reshaped[:, -1, 4], torch.tensor(self.tokenizer.eos_instrument)) |
+                torch.isin(next_decoder_token_out_reshaped[:, -1, 5], torch.tensor(self.tokenizer.eos_velocity))
             )
 
             # Ensure all operands are tensors and correct type
             eos_conditions = torch.tensor(eos_conditions, dtype=torch.bool, device="cuda")
-            tmp  = ~input_mask[:, cur_pos]
-            # print(f"eos_conditions:{eos_conditions.shape}, {eos_conditions},(~input_mask[:, cur_pos]):{tmp.shape}{(~input_mask[:, cur_pos])} ")
+            tmp  = ~input_mask[:, cur_pos].squeeze(-1)
             # Update eos_reached based on the mask and EOS conditions
-            # eos_reached |= (~input_mask[:, cur_pos]) & eos_conditions   
-            #          
-            eos_reached = False
+            eos_reached |= (~input_mask[:, cur_pos].squeeze(-1)) & eos_conditions   
             
-            # eos_reached |= (~input_mask[:, cur_pos]) & (
-            #     next_onset_token_bits == self.tokenizer.eos_onset | next_duration_token == self.tokenizer.eos_dur | next_octave_token == self.tokenizer.eos_octave | next_pitch_token == self.tokenizer.eos_pitch_class | next_instrument_token == self.tokenizer.eos_instrument | next_velocity_token == self.tokenizer.eos_velocity
-            # ) #at pad position and eos 
-
-
             prev_pos = cur_pos
             past_key_values = output.past_key_values
-            """if all(eos_reached): #wait until all sequences reach eos
-                break """
-        
+            if all(eos_reached): #wait until all sequences reach eos
+                print("eos reached!")
+                break 
 
-        assert 1==2
-        #TODO: Check below later
-        if logprobs:
-            token_logprobs = token_logprobs.tolist()
+        """ #TODO: in the future, cut to max gen len
         out_tokens, out_logprobs = [], []
         for i, toks in enumerate(tokens.tolist()):
             # cut to max gen len
@@ -458,7 +327,11 @@ class MusicLlama:
                     pass
             out_tokens.append(toks)
             out_logprobs.append(probs)
-        return (out_tokens, out_logprobs if logprobs else None)
+        return (out_tokens, out_logprobs if logprobs else None)"""
+
+        """cut the input list"""
+
+        return tokens, None
 
     def music_completion(
         self,
@@ -516,7 +389,7 @@ class MusicLlama:
             {
                 "generation": {
                     "role": "assistant",
-                    "content": self.tokenizer.decode(t),
+                    "content": self.tokenizer.decode(t), #TODO add this in the music tokenizer class
                 },
             }
             for t in generation_tokens
