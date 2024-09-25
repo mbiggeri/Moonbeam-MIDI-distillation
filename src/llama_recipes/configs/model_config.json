@@ -33,7 +33,7 @@
   "eos_token":-2,
   "pad_token":-3,
   "onset_vocab_size": 1026,
-  "dur_vocab_size":42,
+  "dur_vocab_size":1026,
   "octave_vocab_size":13,
   "pitch_class_vocab_size":14,
   "instrument_vocab_size":131,
