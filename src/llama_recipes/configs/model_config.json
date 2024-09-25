@@ -1,5 +1,5 @@
 {
-  "architectures": "LlamaForCausalLM",
+  "architectures":  "LlamaForCausalLM",
   "attention_bias": false,
   "attention_dropout": 0.0,
   "bos_token_id": 128000,
@@ -14,6 +14,7 @@
   "model_type": "llama",
   "num_attention_heads": 12,
   "num_hidden_layers": 9,
+  "attn_implementation": "sdpa",
   "num_key_value_heads": 6,
   "pretraining_tp": 1,
   "rms_norm_eps": 1e-05,
@@ -43,6 +44,6 @@
   "pitch_embedding":{"method": "FME", "base":20},
   "instrument_embedding":{"method": "WE", "vocab_size": 131},
   "velocity_embedding":{"method": "FME", "base":131},
-  "decode_vocab_size":1356, 
-  "decoder":{"hidden_size":1024, "num_hidden_layers":4, "_attn_implementation":"output", "rms_norm_eps": 1e-05, "attention_dropout": 0.0, "num_attention_heads":16, "num_key_value_heads": 4, "attention_bias": false, "pretraining_tp": 1, "intermediate_size":1024, "mlp_bias": false, "hidden_act": "silu", "max_position_embeddings":7}
+  "decode_vocab_size":2341, 
+  "decoder":{"hidden_size":1024, "num_hidden_layers":2, "_attn_implementation":"GRU", "rms_norm_eps": 1e-05, "attention_dropout": 0.0, "num_attention_heads":16, "num_key_value_heads": 4, "attention_bias": false, "pretraining_tp": 1, "intermediate_size":1024, "mlp_bias": false, "hidden_act": "silu", "max_position_embeddings":7}
 }

@@ -705,6 +705,7 @@ class CausalLMOutputWithPast(ModelOutput):
 
     loss: Optional[torch.FloatTensor] = None
     generation_logits: torch.FloatTensor = None
+    generation_hidden_state: torch.FloatTensor = None
     logits: Optional[torch.FloatTensor] = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None

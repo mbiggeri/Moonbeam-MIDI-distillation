@@ -361,8 +361,6 @@ def train_overfit(model, batch, train_dataloader,eval_dataloader, tokenizer, opt
     if train_config.enable_fsdp:
         world_size = int(os.environ["WORLD_SIZE"])
 
-
-
     autocast = torch.cuda.amp.autocast if train_config.use_fp16 else nullcontext
     train_prep = []
     train_loss = []
@@ -487,7 +485,8 @@ def train_overfit(model, batch, train_dataloader,eval_dataloader, tokenizer, opt
                     #TODO: More frequent evaluation; Remember to switch on model.train again
                     if step%train_config.validation_interval==0 and train_config.run_validation:
                         
-                        eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = evaluation_overfit(model, train_config, batch, eval_dataloader, local_rank, tokenizer, wandb_run)
+                        eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity, generation_logits, generation_hidden_state, logits_shrinked = evaluation_overfit(model, train_config, batch, eval_dataloader, local_rank, tokenizer, wandb_run)
+
                         if train_config.save_metrics:
                             val_step_loss.extend(temp_val_loss)
                             val_step_perplexity.extend(temp_step_perplexity)
@@ -537,6 +536,10 @@ def train_overfit(model, batch, train_dataloader,eval_dataloader, tokenizer, opt
                                         save_model_checkpoint_ddp(
                                             model, optimizer, rank, train_config, epoch=epoch, step=step
                                         )
+                                        torch.save(generation_logits, f'/data/scratch/acw753/MusicLlama/ddp-MusicLlama-decoder_overfitting/generation_logits_epoch_{epoch}_step_{step}.pt')
+                                        torch.save(generation_hidden_state, f'/data/scratch/acw753/MusicLlama/ddp-MusicLlama-decoder_overfitting/generation_hidden_state_epoch_{epoch}_step_{step}.pt')
+                                        torch.save(logits_shrinked, f'/data/scratch/acw753/MusicLlama/ddp-MusicLlama-decoder_overfitting/logits_shrinked_epoch_{epoch}_step_{step}.pt')
+                                        print(f"generation logits and hidden states saved to /data/scratch/acw753/MusicLlama/ddp-MusicLlama-decoder_overfitting/generation_logits_epoch_{epoch}_step_{step}.pt")
                                         print(" Saving the DDP model checkpoints and optimizer using FULL_STATE_DICT")
                                         print("=====================================================")
                                     else:
@@ -796,7 +799,7 @@ def evaluation_overfit(model,train_config, batch, eval_dataloader, local_rank, t
                         'eval/loss': eval_epoch_loss,
                     }, commit=False)
 
-    return eval_ppl, eval_epoch_loss, val_step_loss, val_step_perplexity
+    return eval_ppl, eval_epoch_loss, val_step_loss, val_step_perplexity, outputs.generation_logits, outputs.generation_hidden_state, outputs.logits
 
 
 def freeze_transformer_layers(model, num_layer):
