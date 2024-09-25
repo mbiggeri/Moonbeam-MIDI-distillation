@@ -20,7 +20,6 @@ from torch.optim.lr_scheduler import StepLR
 from transformers import (
     AutoTokenizer,
     LlamaForCausalLM, 
-    LlamaForCausalLM_Baseline,
     LlamaConfig,
 )
 from llama_recipes.datasets.music_tokenizer import MusicTokenizer
@@ -133,7 +132,6 @@ def main(**kwargs):
     wandb_run = None
 
     model_dictionary = {
-        "LlamaForCausalLM_Baseline": LlamaForCausalLM_Baseline,
         "LlamaForCausalLM": LlamaForCausalLM
     }
 
