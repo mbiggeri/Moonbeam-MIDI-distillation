@@ -394,6 +394,20 @@ def train_overfit(model, batch, train_dataloader,eval_dataloader, tokenizer, opt
             with profile(train_config,local_rank) as profile_context:
 
                 for step, batch_unused in enumerate(train_dataloader):
+                    # print("batch train: ", batch['input_ids'])
+                    """
+                    save data as npy file for visualization
+                    """
+
+                    # Save data as npy files for the first few steps for visualization
+                    if step < 5:
+                        import numpy as np
+                        for key in batch.keys():
+                            # Convert the tensor to a NumPy array (move to CPU if needed)
+                            data_array = batch[key].cpu().numpy()
+                            
+                            # Save the NumPy array to a file with a unique name per key and step
+                            np.save(f'/data/home/acw753/musicllama/dataset_analysis/{key}_step_{step}.npy', data_array)
 
                     if step > 1000:
                         break
@@ -417,7 +431,6 @@ def train_overfit(model, batch, train_dataloader,eval_dataloader, tokenizer, opt
                                 batch[key] = batch[key].to('xpu:0')
                             else:
                                 batch[key] = batch[key].to('cuda:0')
-
                     with autocast():
                         loss = model(**batch).loss
                     loss = loss / gradient_accumulation_steps
@@ -724,15 +737,15 @@ def evaluation_overfit(model,train_config, batch, eval_dataloader, local_rank, t
                         batch[key] = batch[key].to('xpu:0')
                     else:
                         batch[key] = batch[key].to('cuda:0')
-
             # Ensure no gradients are computed for this scope to save memory
             with torch.no_grad():
                 # Forward pass and compute loss
                 outputs = model(**batch)
                 loss = outputs.loss
-                """ check generation logits and targets  """ #TODO: return outputs.generation logits and generation hidden states --> return to upper level --> save to file and compare it with overfit_inference
+                """ check generation logits and targets  """
 
                 generation_logits = outputs.generation_logits #batch * len_x, decoder_vocab_size
+
                 batch_size = batch['input_ids'].shape[0]
                 length = batch['input_ids'].shape[1]-1 
                 no_attributes = 6
@@ -744,9 +757,15 @@ def evaluation_overfit(model,train_config, batch, eval_dataloader, local_rank, t
                 max_values, max_indices = torch.max(generation_logits_reshaped, dim=-1)
                 # print(f"max_indices:{max_indices.shape}, {max_indices}")
                 torch.save(generation_logits_reshaped, "/data/scratch/acw753/MusicLlama/ddp-MusicLlama-decoder_overfitting/batch_data_train_logits.pth")
-                print("generation_logits_reshaped saved to: /data/scratch/acw753/MusicLlama/ddp-MusicLlama-decoder_overfitting/batch_data_train_logits.pth")
                 torch.save(max_indices, "/data/scratch/acw753/MusicLlama/ddp-MusicLlama-decoder_overfitting/batch_data_train_logits_max.pth")
 
+                
+                try:
+                    decoded_tokens = tokenizer.convert_from_language_tokens(torch.max(generation_logits, dim=-1))
+                    torch.save(torch.tensor(decoded_tokens), "/data/scratch/acw753/MusicLlama/ddp-MusicLlama-decoder_overfitting/batch_data_train_logits_max_decoded_tokens.pth")
+                    print(f"decoded_tokens:{decoded_tokens}")
+                except:
+                    print(f"failed to decode tokens")
 
                 if train_config.save_metrics:
                     val_step_loss.append(loss.detach().float().item())
