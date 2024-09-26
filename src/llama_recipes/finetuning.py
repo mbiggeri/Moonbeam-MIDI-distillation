@@ -222,7 +222,7 @@ def main(**kwargs):
                     mixed_precision=mixed_precision_policy if not ddp_config.pure_bf16 else None, 
                     device_mesh=hsdp_device_mesh,
                     device_ids=[local_rank],
-                    find_unused_parameters=True #TODO: delete
+                    find_unused_parameters=False,
                     )
     elif not train_config.quantization and not train_config.enable_fsdp:
         if is_xpu_available():
