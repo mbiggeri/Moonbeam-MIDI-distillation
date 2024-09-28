@@ -4,18 +4,25 @@
 from typing import List, Optional
 
 import fire
-
+import pandas as pd
+import numpy as np
+import os
+import re
 # from llama import Dialog, Llama
 from generation import MusicLlama
+import random
 
 def main(
     ckpt_dir: str,
+    csv_file: str,
     tokenizer_path: str,
     model_config_path: str,
     temperature: float = 0.6,
     top_p: float = 0.9,
     max_seq_len: int = 512,
     max_batch_size: int = 4,
+    prompt_len: int = 5,
+    num_test_data: int = 50,
     max_gen_len: Optional[int] = None,
 ):
     """
@@ -46,125 +53,36 @@ def main(
         max_batch_size=max_batch_size,
     ) # this is a model actually
 
-
-    #TODO: WRITE PROMPTS -- accept a couple of formats: 1. midi + num_token or length 2. npy file 
-    # prompts = [[[0, 0, 0, 0, 0, 0],
-    #             [0, 384, 2, 11, 0, 100],
-    #             [0, 384, 3, 6, 0, 100],
-    #             [0, 384, 2, 11, 0, 100],
-    #             [0, 384, 3, 6, 0, 100],
-    #             [0, 48, 4, 6, 0, 100],
-    #             [0, 192, 3, 11, 0, 100]],
-    #            [[0, 0, 0, 0, 0, 0],
-    #             [111, 16, 3, 5, 128, 100],
-    #             [111, 16, 2, 11, 128, 100],
-    #             [126, 16, 3, 5, 128, 100],
-    #             [126, 16, 2, 11, 128, 100]]
-    #            ] #[[0, 0, 0, 0, 0, 0]]
+    #1. read the csv file; 2. read the header with split = test and get the npy file path; 3. load the npy file; 4. get the first 10 tokens;
     
-    # prompts = [[[0, 0, 0, 0, 0, 0],
-    #             [111, 16, 3, 5, 128, 100],
-    #             [111, 16, 2, 11, 128, 100],
-    #             [126, 16, 3, 5, 128, 100],
-    #             [126, 16, 2, 11, 128, 100]]
-    #            ] #[[0, 0, 0, 0, 0, 0]]
+    prompts = []
+    df = pd.read_csv(csv_file)
 
-    prompts = [[[0, 0, 0, 0, 0, 0], 
-        [  0,   4,   2,   7, 128,  81],
-       [ 50,   4,   2,   7, 128,  69],
-       [100,   4,   2,   7, 128,  68],
-       [150,   4,   2,   7, 128,  71],
-       [200,  25,   5,   2,  61, 100],
-       [200,  25,   5,   6,  61, 100],
-       [200,  25,   5,   9,  61, 100],
-       [200,  75,   3,   7,  27, 100],
-       [200,  75,   2,   7,  33, 109],
-       [200,  73,   4,   7,  56,  81]]]
+    # 2. Find the row where 'split' is 'test' and get the corresponding .npy file path
+    test_filenames = df[df['split'] == 'test']['file_base_name'].tolist() 
+    test_filenames_sampled = random.sample(test_filenames, num_test_data)
 
-
-    """
-    from training set:
-
-
-
-array([[  0,   4,   2,   7, 128,  81],
-       [ 50,   4,   2,   7, 128,  69],
-       [100,   4,   2,   7, 128,  68],
-       [150,   4,   2,   7, 128,  71],
-       [200,  25,   5,   2,  61, 100],
-       [200,  25,   5,   6,  61, 100],
-       [200,  25,   5,   9,  61, 100],
-       [200,  75,   3,   7,  27, 100],
-       [200,  75,   2,   7,  33, 109],
-       [200,  73,   4,   7,  56,  81]])
- np.load("/data/scratch/acw753/lakhmidi_processed/processed/1513db2093f3ae5b191545a9718f4f56.npy")[:40]
-array([[  0,   4,   2,   7, 128,  81],
-       [ 50,   4,   2,   7, 128,  69],
-       [100,   4,   2,   7, 128,  68],
-       [150,   4,   2,   7, 128,  71],
-       [200,  25,   5,   2,  61, 100],
-       [200,  25,   5,   6,  61, 100],
-       [200,  25,   5,   9,  61, 100],
-       [200,  75,   3,   7,  27, 100],
-       [200,  75,   2,   7,  33, 109],
-       [200,  73,   4,   7,  56,  81],
-       [200,  73,   4,  11,  56,  81],
-       [200,  74,   5,   2,  56,  81],
-       [200,  49,   3,   7,  27,  84],
-       [200,  48,   4,   2,  27,  84],
-       [200,  49,   4,   7,  27,  84],
-       [200,  73,   4,   7,  27,  69],
-       [200,  73,   4,  11,  27,  69],
-       [200,  74,   5,   2,  27,  69],
-       [200,   4,   2,  11, 128, 109],
-       [200,   4,   3,   6, 128, 111],
-       [225, 125,   5,   2,  61, 100],
-       [225, 125,   5,   7,  61, 100],
-       [225, 125,   5,  11,  61, 100],
-       [250,  24,   3,   7,  27,  76],
-       [250,  24,   4,   2,  27,  76],
-       [250,  24,   4,   7,  27,  76],
-       [250,   4,   3,   4, 128, 111],
-       [250,   4,   3,   6, 128,  89],
-       [275,  25,   4,   2,  27, 100],
-       [275,  25,   2,   7,  33,  92],
-       [275,  23,   4,   7,  56,  75],
-       [275,  23,   4,  11,  56,  75],
-       [275,  24,   5,   2,  56,  75],
-       [275,  24,   3,   7,  27,  76],
-       [275,  24,   4,   2,  27,  76],
-       [275,  24,   4,   7,  27,  76],
-       [275,  24,   4,   7,  27,  86],
-       [275,  24,   4,  11,  27,  86],
-       [275,  24,   5,   2,  27,  86],
-       [275,   4,   2,  11, 128,  72]]) 
-    
-    """
-
-
-
-    # prompts = [[[0, 0, 0, 0, 0, 0],
-    #             [0, 384, 2, 11, 0, 100]],
-    #            [[0, 0, 0, 0, 0, 0],
-    #             [111, 16, 3, 5, 128, 100]],
-    #            [[0, 0, 0, 0, 0, 0],
-    #             [386, 371, 5, 7, 48, 88]],
-    #            ] #[[0, 0, 0, 0, 0, 0]]
-
+    for filename in test_filenames_sampled:
+        test_data = np.load(os.path.join(os.path.dirname(csv_file), "processed", filename))
+        test_data_with_sos = generator.tokenizer.encode_series(test_data, if_add_sos = True, if_add_eos = False)
+        prompts.append(test_data_with_sos[:prompt_len])
+        
     results = generator.music_completion(
         prompts,
         max_gen_len=max_gen_len,
         temperature=temperature,
         top_p=top_p,
     )
-
-    #TODO: Detokenizer + midi + render 
-    for dialog, result in zip(prompts, results):
+    for i, (dialog, result) in enumerate(zip(prompts, results)):
         for msg in dialog:
-            print(f"{msg['role'].capitalize()}: {msg['content']}\n")
+            print(f"msg: {msg}")
         print(
             f"> {result['generation']['role'].capitalize()}: {result['generation']['content']}"
         )
+
+        epoch_step = re.search(r'(\d+-\d+)\.pt$', ckpt_dir).group(1)
+        result['generation']['content'].save(f'{os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}.mid')
+        print(f"midi saved at {os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}.mid")
         print("\n==================================\n")
 
 
