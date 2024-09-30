@@ -30,6 +30,7 @@ from llama_recipes.configs import ddp_config as DDP_CONFIG
 from llama_recipes.configs import train_config as TRAIN_CONFIG
 from llama_recipes.data.concatenator import ConcatDataset
 from llama_recipes.policies import AnyPrecisionAdamW, apply_fsdp_checkpointing
+from llama_recipes.model_checkpointing import load_model_checkpoint_ddp
 
 from llama_recipes.utils import fsdp_auto_wrap_policy
 from llama_recipes.utils.config_utils import (
@@ -293,6 +294,15 @@ def main(**kwargs):
             lr=train_config.lr,
             weight_decay=train_config.weight_decay,
         )
+
+    #if trained_ckpt is provided, continue training
+    if train_config.trained_checkpoint_path:
+        starting_epoch, starting_step = load_model_checkpoint_ddp(model, optimizer, local_rank, train_config.trained_checkpoint_path)
+        print(f"Model loaded with checkpoint: {train_config.trained_checkpoint_path}, {starting_epoch=} {starting_step=}")
+    else:
+        starting_epoch, starting_step = 0, 0
+
+    
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
 
     # Start the training process
@@ -303,6 +313,8 @@ def main(**kwargs):
         tokenizer,
         optimizer,
         scheduler,
+        starting_epoch,
+        starting_step, 
         train_config.gradient_accumulation_steps,
         train_config,
         fsdp_config if train_config.enable_fsdp else None,

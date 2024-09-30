@@ -9,5 +9,6 @@ from llama_recipes.model_checkpointing.checkpoint_handler import (
     save_model_and_optimizer_sharded,
     load_model_sharded,
     load_sharded_model_single_gpu,
-    save_model_checkpoint_ddp
+    save_model_checkpoint_ddp,
+    load_model_checkpoint_ddp
 )

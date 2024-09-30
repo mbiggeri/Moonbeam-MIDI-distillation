@@ -240,9 +240,29 @@ def save_model_checkpoint_ddp(model, optimizer, rank, cfg, epoch=1, step=200):
         save_dir.mkdir(parents=True, exist_ok=True)
         save_name = cfg.model_name + "-" + str(epoch) + "-" +str(step)+".pt"
         save_full_path = str(save_dir) + "/" + save_name
+        #save 
+        checkpoint = {
+            'epoch': epoch,
+            'step': step,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict()
+        }
 
-        torch.save(model.state_dict(), save_full_path)
+        torch.save(checkpoint, save_full_path)
         print(f"model checkpoint saved for epoch {epoch} at {save_full_path}\n")
+
+def load_model_checkpoint_ddp(model, optimizer, local_rank, trained_checkpoint_path):
+
+    # where is the checkpoint at...
+    full_state_dict_model_path = trained_checkpoint_path
+    # map_location = {'cuda:%d' % 0: 'cuda:%d' % local_rank}
+    map_location='cuda:{}'.format(local_rank)
+    model_checkpoint = torch.load(full_state_dict_model_path, map_location=map_location)
+    # integrate into loaded model
+    model.load_state_dict(model_checkpoint['model_state_dict'])
+    optimizer.load_state_dict(model_checkpoint['optimizer_state_dict'])
+    
+    return model_checkpoint['epoch'], model_checkpoint['step']
 
 def load_optimizer_checkpoint(model, optimizer_checkpoint_path, rank):
     """load an fsdp optimizer full_state checkpoint using scatter method

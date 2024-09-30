@@ -58,13 +58,14 @@ def main(
         top_p=top_p,
     )
 
-    #TODO: Detokenizer + midi + render 
-    for dialog, result in zip(prompts, results):
+    for i, (dialog, result) in enumerate(zip(prompts, results)):
         for msg in dialog:
-            print(f"{msg['role'].capitalize()}: {msg['content']}\n")
+            print(f"msg: {msg}")
         print(
             f"> {result['generation']['role'].capitalize()}: {result['generation']['content']}"
         )
+        result['generation']['content'].save(f'{overfitting_ckpt_sample_path}/{str(i)}.mid')
+        print(f"midi saved at {overfitting_ckpt_sample_path}/{str(i)}.mid")
         print("\n==================================\n")
 
 

@@ -389,7 +389,7 @@ class MusicLlama:
             {
                 "generation": {
                     "role": "assistant",
-                    "content": self.tokenizer.decode(t), #TODO add this in the music tokenizer class
+                    "content": self.tokenizer.compound_to_midi(t.tolist()[1:]), #get rid of the sos token
                 },
             }
             for t in generation_tokens

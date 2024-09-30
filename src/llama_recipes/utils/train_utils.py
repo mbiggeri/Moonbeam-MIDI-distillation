@@ -68,7 +68,7 @@ def profile(cfg, local_rank=None):
         yield None
 
 
-def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_scheduler, gradient_accumulation_steps, train_config, fsdp_config=None, ddp_config=None, local_rank=None, rank=None, wandb_run=None):
+def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_scheduler, starting_epoch, starting_step,gradient_accumulation_steps, train_config, fsdp_config=None, ddp_config=None, local_rank=None, rank=None, wandb_run=None):
     """
     Trains the model on the given dataloader
 
@@ -116,7 +116,7 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
     total_train_steps = 0
     max_steps_reached = False  # Flag to indicate max training steps reached
     # Start the training loop
-    for epoch in range(train_config.num_epochs):
+    for epoch in range(starting_epoch, train_config.num_epochs):
         # stop when the maximum number of training steps is reached
         if max_steps_reached:
             break
@@ -125,9 +125,11 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
             model.train()
             total_loss = 0.0
             total_length = len(train_dataloader)//gradient_accumulation_steps
-            pbar = tqdm(colour="blue", desc=f"Training Epoch: {epoch+1}", total=total_length, dynamic_ncols=True)
+            pbar = tqdm(colour="blue", desc=f"Training Epoch: {epoch}", total=total_length, dynamic_ncols=True)
             with profile(train_config,local_rank) as profile_context:
                 for step, batch in enumerate(train_dataloader):
+                    if step < starting_step and epoch == starting_epoch:  #skip until the starting step in the first continuing epoch
+                        continue
                     total_train_steps += 1
                     # stop when the maximum number of training steps is reached
                     if train_config.max_train_step > 0 and total_train_steps > train_config.max_train_step:
@@ -192,7 +194,7 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                                 'train/loss': loss.detach().float(),
                             })
 
-                    pbar.set_description(f"Training Epoch: {epoch+1}/{train_config.num_epochs}, step {step}/{len(train_dataloader)} completed (loss: {loss.detach().float()})")
+                    pbar.set_description(f"Training Epoch: {epoch}/{train_config.num_epochs}, step {step}/{len(train_dataloader)} completed (loss: {loss.detach().float()})")
 
                     if train_config.save_metrics:
                         save_to_json(metrics_filename, train_step_loss, train_loss, train_step_perplexity, train_prep, val_step_loss, val_loss, val_step_perplexity, val_prep)
@@ -264,9 +266,9 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                             best_val_loss = eval_epoch_loss
                             if train_config.enable_fsdp or train_config.enable_ddp:
                                 if rank==0:
-                                    print(f"best eval loss on epoch {epoch+1} is {best_val_loss}")
+                                    print(f"best eval loss on epoch {epoch} is {best_val_loss}")
                             else:
-                                print(f"best eval loss on epoch {epoch+1} is {best_val_loss}")
+                                print(f"best eval loss on epoch {epoch} is {best_val_loss}")
                         val_loss.append(float(best_val_loss))
                         val_prep.append(float(eval_ppl))     
 
@@ -301,9 +303,9 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
 
         if train_config.enable_fsdp or train_config.enable_ddp:
             if rank==0:
-                print(f"Epoch {epoch+1}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s")
+                print(f"Epoch {epoch}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s")
         else:
-            print(f"Epoch {epoch+1}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s")
+            print(f"Epoch {epoch}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s")
 
         # Saving the results every epoch to plot later
         if train_config.save_metrics:
@@ -390,7 +392,7 @@ def train_overfit(model, batch, train_dataloader,eval_dataloader, tokenizer, opt
             model.train()
             total_loss = 0.0
             total_length = len(train_dataloader)//gradient_accumulation_steps
-            pbar = tqdm(colour="blue", desc=f"Training Epoch: {epoch+1}", total=total_length, dynamic_ncols=True)
+            pbar = tqdm(colour="blue", desc=f"Training Epoch: {epoch}", total=total_length, dynamic_ncols=True)
             with profile(train_config,local_rank) as profile_context:
 
                 for step, batch_unused in enumerate(train_dataloader):
@@ -476,7 +478,7 @@ def train_overfit(model, batch, train_dataloader,eval_dataloader, tokenizer, opt
                                 'train/loss': loss.detach().float(),
                             })
 
-                    pbar.set_description(f"Training Epoch: {epoch+1}/{train_config.num_epochs}, step {step}/{len(train_dataloader)} completed (loss: {loss.detach().float()})")
+                    pbar.set_description(f"Training Epoch: {epoch}/{train_config.num_epochs}, step {step}/{len(train_dataloader)} completed (loss: {loss.detach().float()})")
 
                     if train_config.save_metrics:
                         save_to_json(metrics_filename, train_step_loss, train_loss, train_step_perplexity, train_prep, val_step_loss, val_loss, val_step_perplexity, val_prep)
@@ -553,9 +555,9 @@ def train_overfit(model, batch, train_dataloader,eval_dataloader, tokenizer, opt
                             best_val_loss = eval_epoch_loss
                             if train_config.enable_fsdp or train_config.enable_ddp:
                                 if rank==0:
-                                    print(f"best eval loss on epoch {epoch+1} is {best_val_loss}")
+                                    print(f"best eval loss on epoch {epoch} is {best_val_loss}")
                             else:
-                                print(f"best eval loss on epoch {epoch+1} is {best_val_loss}")
+                                print(f"best eval loss on epoch {epoch} is {best_val_loss}")
                         val_loss.append(float(best_val_loss))
                         val_prep.append(float(eval_ppl))     
 
@@ -590,9 +592,9 @@ def train_overfit(model, batch, train_dataloader,eval_dataloader, tokenizer, opt
 
         if train_config.enable_fsdp or train_config.enable_ddp:
             if rank==0:
-                print(f"Epoch {epoch+1}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s")
+                print(f"Epoch {epoch}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s")
         else:
-            print(f"Epoch {epoch+1}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s")
+            print(f"Epoch {epoch}: train_perplexity={train_perplexity:.4f}, train_epoch_loss={train_epoch_loss:.4f}, epoch time {epoch_end_time}s")
 
         # Saving the results every epoch to plot later
         if train_config.save_metrics:
