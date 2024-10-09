@@ -393,3 +393,9 @@ class MusicTokenizer():
 
         return mid
 
+    def compound_to_midi_multi(self, list_of_compound_lists):
+        out = []
+        for _, compound_lists in enumerate(list_of_compound_lists):
+            midi_out = self.compound_to_midi(compound_lists)
+            out.append(midi_out)
+        return out

@@ -40,6 +40,7 @@ def main(
     seed = 42
     import torch
     torch.manual_seed(seed)
+    random.seed(seed)  # You can choose any seed value, 42 is commonly used
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU.    
@@ -76,13 +77,14 @@ def main(
     for i, (dialog, result) in enumerate(zip(prompts, results)):
         for msg in dialog:
             print(f"msg: {msg}")
-        print(
-            f"> {result['generation']['role'].capitalize()}: {result['generation']['content']}"
-        )
 
         epoch_step = re.search(r'(\d+-\d+)\.pt$', ckpt_dir).group(1)
-        result['generation']['content'].save(f'{os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}.mid')
-        print(f"midi saved at {os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}.mid")
+        for j, sub_mid in enumerate(result['generation']['content']):
+            sub_mid.save(f'{os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}_{str(j)}.mid')
+        print(f"midis saved at {os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}_x.mid")
+        #Also save the prompt 
+        generator.tokenizer.compound_to_midi(dialog[1:]).save(f'{os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}_prompt.mid')
+        print(f"midi prompt saved at {os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}_prompt.mid")
         print("\n==================================\n")
 
 

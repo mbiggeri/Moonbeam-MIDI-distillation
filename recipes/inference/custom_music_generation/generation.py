@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import List, Optional, Tuple, TypedDict
 from accelerate.utils import is_xpu_available
+import time
 from transformers import (
     AutoTokenizer,
     LlamaForCausalLM,
@@ -248,7 +249,7 @@ class MusicLlama:
         """KV Cache"""
         past_key_values = None
         for cur_pos in range(min_prompt_len, total_len): #recursively generate new tokens in parallel
-            print("input to model", tokens[:, prev_pos:cur_pos])
+            print(f"{cur_pos}/{total_len} generated")
             output = self.model.forward(input_ids = tokens[:, prev_pos:cur_pos], past_key_values = past_key_values, use_cache = True, attention_mask = None) #output logtis: (batch, len, dim 
             #KV cache 
             # print("artificial check!")
@@ -260,17 +261,38 @@ class MusicLlama:
             hidden_state = output.logits  #first forward pass: batch, len_x, dim --> batch*len_x, dim  --> num_layer, batch*len_x, dim; 
             hidden_state = hidden_state.view(hidden_state.shape[0]*hidden_state.shape[1], hidden_state.shape[2]).unsqueeze(0).expand(self.model.decoder.num_hidden_layers, -1, -1).contiguous() #batch, len_x, dim --> num_layer, batch*len_x, dim; 
 
-            for _ in range(6): 
+            for attribute in ["timeshift_dict_decode", "duration_dict_decode", "octave_dict_decode", "pitch_dict_decode", "instrument_dict_decode", "velocity_dict_decode"]:
                 output_decoder = self.model.forward(decoded_hidden_state = hidden_state, decoded_language_tokens = next_decoder_token, attention_mask = None) #here attention mask?
                 generation_logits = output_decoder.generation_logits ##batch*len_x, len_y, decode_vocab_size
                 hidden_state = output_decoder.generation_hidden_state ##num_layers, batch*len_x, dim
 
+                sample_indices = list(getattr(self.tokenizer, attribute).keys())
+                sample_indices_set = set(sample_indices)
                 if temperature > 0:
                     probs = torch.softmax(generation_logits[:, -1, : ]/ temperature, dim=-1) 
-                    next_decoder_token = sample_top_p(probs, top_p)
+                    next_decoder_token = sample_top_p(probs, top_p) 
+                    
+                    for i in range(next_decoder_token.size(0)):  # Ensure that all next_decoder_token values are in sample_indices
+                        start_time = time.time()
+                        while next_decoder_token[i, 0].item() not in sample_indices_set:  # Check if token is valid
+                            next_decoder_token[i, 0] = sample_top_p(probs, top_p)[i, 0]  # Resample and replace in-place
+                            if time.time() - start_time > 5:  # If the loop runs for more than 5 seconds, print a warning
+                                print(f"Warning: Resampling for token {i} has taken longer than 5 seconds.")
                 else:
                     probs = torch.softmax(generation_logits[:, -1, :], dim=-1)  #batch*len_x, len_y (last), decode_vocab_size
-                    next_decoder_token = probs.argmax(dim=-1, keepdim=True) #batch*len_x, 1
+                    # next_decoder_token_greedy = probs.argmax(dim=-1, keepdim=True) #batch*len_x, 1
+
+                    sample_indices_tensor = torch.tensor(sample_indices, device=probs.device)  # Ensure it's on the same device as probs
+                    probs_at_sample_indices = probs[:, sample_indices_tensor]  # Shape: [batch_size, num_sample_indices]
+                    next_token_index_in_subset = probs_at_sample_indices.argmax(dim=-1, keepdim=True)  # Shape: [batch_size, 1]
+                    next_decoder_token = sample_indices_tensor[next_token_index_in_subset.squeeze(-1)].unsqueeze(-1)   # Shape: [batch_size]
+
+                # Get the cumulative probability at sample_indices, if c_p is smaller than 0.8, print warning
+                probs_at_sample_indices = probs[:, sample_indices]  # Extract probabilities for the sampled indices
+                cumulative_prob = probs_at_sample_indices.sum(dim=-1)  # Sum over the sampled indices to get cumulative prob
+                num_samples_below_threshold = (cumulative_prob < 0.8).sum().item()  # Count the number of True values
+                if num_samples_below_threshold > 0:
+                    print(f"{num_samples_below_threshold} / {cumulative_prob.shape[0]} samples have a cumulative probability < 0.8 at the allowed indices")
 
                 next_decoder_token_out = torch.cat([next_decoder_token_out, next_decoder_token], dim=-1) #batch*len_x, len_y
             
@@ -279,59 +301,54 @@ class MusicLlama:
             next_decoder_token_lang = self.tokenizer.convert_from_language_tokens(next_decoder_token_out_reshaped) #batch, lenx, 6 
             
             previous_onset = tokens[:, cur_pos-1, 0] #batch, 
-            new_onset = previous_onset + torch.tensor(next_decoder_token_lang)[:, -1, 0].to(previous_onset) #batch, + batch --> batch
-            next_decoder_token_onset = torch.cat ([new_onset.unsqueeze(-1) ,torch.tensor(next_decoder_token_lang)[:, -1, 1:]],dim=-1).to(tokens) #batch, 1  cat  batch, 5
+            new_onset = previous_onset + next_decoder_token_lang.clone().detach()[:, -1, 0].to(previous_onset) #batch, + batch --> batch
+            next_decoder_token_onset = torch.cat ([new_onset.unsqueeze(-1) ,next_decoder_token_lang.clone().detach()[:, -1, 1:]],dim=-1).to(tokens) #batch, 1  cat  batch, 5
             next_token = torch.where(
                 input_mask[:, cur_pos], tokens[:, cur_pos], next_decoder_token_onset
             ) 
             tokens[:, cur_pos] = next_token
 
             """check if next token is eos"""
-            eos_conditions = (
-                next_decoder_token_out_reshaped[:, -1, 0] == torch.tensor(self.tokenizer.eos_timeshift) | #batch, 6
-                torch.isin(next_decoder_token_out_reshaped[:, -1, 1], torch.tensor(self.tokenizer.eos_dur)) | 
-                torch.isin(next_decoder_token_out_reshaped[:, -1, 2], torch.tensor(self.tokenizer.eos_octave)) |
-                torch.isin(next_decoder_token_out_reshaped[:, -1, 3], torch.tensor(self.tokenizer.eos_pitch_class)) |
-                torch.isin(next_decoder_token_out_reshaped[:, -1, 4], torch.tensor(self.tokenizer.eos_instrument)) |
-                torch.isin(next_decoder_token_out_reshaped[:, -1, 5], torch.tensor(self.tokenizer.eos_velocity))
-            )
+            eos_conditions_onset= next_decoder_token_lang.clone().detach()[:, -1, 0] == self.tokenizer.eos_timeshift #batch, 
+            eos_conditions_dur = next_decoder_token_lang.clone().detach()[:, -1, 1] == self.tokenizer.eos_dur #batch,
+            eos_conditions_oct = next_decoder_token_lang.clone().detach()[:, -1, 2] == self.tokenizer.eos_octave #batch,
+            eos_conditions_pitch = next_decoder_token_lang.clone().detach()[:, -1, 3] == self.tokenizer.eos_pitch_class #batch,
+            eos_conditions_instr = next_decoder_token_lang.clone().detach()[:, -1, 4] == self.tokenizer.eos_instrument #batch,
+            eos_conditions_vel = next_decoder_token_lang.clone().detach()[:, -1, 5] == self.tokenizer.eos_velocity #batch,
+            eos_conditions_all_attr = torch.stack([eos_conditions_onset, eos_conditions_dur, eos_conditions_oct, eos_conditions_pitch, eos_conditions_instr, eos_conditions_vel], dim = -1) #batch, 6
+            eos_conditions = torch.any(eos_conditions_all_attr, dim = -1).to(input_mask) # batch, 1 
 
-            # Ensure all operands are tensors and correct type
-            eos_conditions = torch.tensor(eos_conditions, dtype=torch.bool, device="cuda")
-            tmp  = ~input_mask[:, cur_pos].squeeze(-1)
             # Update eos_reached based on the mask and EOS conditions
             eos_reached |= (~input_mask[:, cur_pos].squeeze(-1)) & eos_conditions   
-            
             prev_pos = cur_pos
             past_key_values = output.past_key_values
             if all(eos_reached): #wait until all sequences reach eos
                 print("eos reached!")
                 break 
+        tokens = tokens[:, 1:, :] #remove SOS token
 
-        """ #TODO: in the future, cut to max gen len
+         #TODO: in the future, return logprob
         out_tokens, out_logprobs = [], []
         for i, toks in enumerate(tokens.tolist()):
             # cut to max gen len
             start = 0 if echo else len(prompt_tokens[i])
             toks = toks[start : len(prompt_tokens[i]) + max_gen_len]
             probs = None
-            if logprobs:
-                probs = token_logprobs[i][start : len(prompt_tokens[i]) + max_gen_len]
+            """if logprobs:
+                probs = token_logprobs[i][start : len(prompt_tokens[i]) + max_gen_len]"""
             # cut to after eos tok if any
-            for stop_token in self.tokenizer.stop_tokens:
+            for j, stop_token in enumerate([self.tokenizer.eos_timeshift, self.tokenizer.eos_dur, self.tokenizer.eos_octave, self.tokenizer.eos_pitch_class, self.tokenizer.eos_instrument, self.tokenizer.eos_velocity]): #BATCH, LEN, 6 --> CHECK EACH LAST DIM AND COMPARE WITH STOP TOKENS --> FIND SMALLEST 
+                if j==0: #skip onset
+                    continue
                 try:
-                    eos_idx = toks.index(stop_token)
+                    eos_idx = [row[j] for row in toks].index(stop_token)  #basically [row[j] for row in toks] means toks[:, i] 
                     toks = toks[:eos_idx]
                     probs = probs[:eos_idx] if logprobs else None
                 except ValueError:
                     pass
             out_tokens.append(toks)
             out_logprobs.append(probs)
-        return (out_tokens, out_logprobs if logprobs else None)"""
-
-        """cut the input list"""
-
-        return tokens, None
+        return (out_tokens, out_logprobs if logprobs else None)
 
     def music_completion(
         self,
@@ -372,7 +389,16 @@ class MusicLlama:
             temperature=temperature,
             top_p=top_p,
             logprobs=logprobs,
+            echo = True
         )
+        #Post processing: if the generated tokens have more than 15 channels, split the generation tokens into multiple parts of at most 15 channels 
+        generation_tokens_post_proc = []
+        for t in generation_tokens: #check if generated midi has more than 16 channels (instruments)
+            if len(set(row[4] for row in t))>15:
+                generation_tokens_post_proc.append(self.postprocess_split(t)) # postprocess_split returns a compounded list, where each element is a tensor with shape (len, 6) with max 16 instrument
+            else:
+                generation_tokens_post_proc.append([t])    
+
         if logprobs:
             return [
                 {
@@ -389,11 +415,52 @@ class MusicLlama:
             {
                 "generation": {
                     "role": "assistant",
-                    "content": self.tokenizer.compound_to_midi(t.tolist()[1:]), #get rid of the sos token
+                    "content": self.tokenizer.compound_to_midi_multi(t), #a list of midi objects each contains at most 15 instruments
+                    "tokens": t,
                 },
             }
-            for t in generation_tokens
+            for t in generation_tokens_post_proc #t is a list of tensors with shape (len, 6)
         ]
+    @staticmethod
+    def postprocess_split(tokens):
+        """Processes tokens to group them into sublists, each containing up to 16 unique instruments.
+        
+        Args:
+            tokens (np.ndarray): An array with shape (len, 6), where tokens[:, 4] contains instrument information.
+        
+        Returns:
+            List[List[np.ndarray]]: A list of lists, where each inner list contains tokens for up to 16 unique instruments.
+        """
+        split2instrument = dict() # split_id1: [instr1, instr2, ...], split_id2: [instr17, instr18, ...]
+        instrument2split = dict() # instr1: split_id1, instr2: split_id1, instr17: split_id2, instr18: split_id2
+        split2token = dict() # split_id1: [token1, token2, ...], split_id2: [token17, token18, ...]
+        
+        # Iterate through each token and append it to the current list
+        for token in tokens:
+            instrument = int(token[4])
+
+            if instrument in instrument2split:
+                split_id = instrument2split[instrument]
+                split2token[split_id].append(token)
+            else: 
+                #if instrument not in instrument2split, check if the latest split has less than 15 instruments, if so, append the token to the latest split, otherwise create a new split and append the token to it
+                if len(split2instrument)==0:
+                    split2token[0] = [token]
+                    split2instrument[0] = [instrument]
+                    instrument2split[instrument] = 0
+                else:
+                    last_split = list(split2instrument.keys())[-1]
+                    if len(split2instrument[last_split]) < 15:
+                        split2token[last_split].append(token)
+                        split2instrument[last_split].append(instrument)
+                        instrument2split[instrument] = last_split
+                    else:
+                        new_split = last_split + 1
+                        split2token[new_split]=[token]
+                        split2instrument[new_split]=[instrument]
+                        instrument2split[instrument] = new_split
+
+        return [value for _, value in split2token.items()]
 
 
 def sample_top_p(probs, p):
