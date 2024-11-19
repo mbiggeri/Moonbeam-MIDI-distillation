@@ -162,7 +162,7 @@ class MusicLlama:
         model = LlamaForCausalLM(llama_config) 
         start_time = time.time()
         checkpoint = torch.load(ckpt_dir)
-        
+        checkpoint = checkpoint['model_state_dict']
         new_state_dict = {}
         for k, v in checkpoint.items():
             if k.startswith('module.'): # Check if the keys have 'module.' prefix and remove it if necessary

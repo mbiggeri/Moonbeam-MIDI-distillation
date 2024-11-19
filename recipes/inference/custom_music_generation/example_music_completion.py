@@ -64,7 +64,7 @@ def main(
     test_filenames_sampled = random.sample(test_filenames, num_test_data)
 
     for filename in test_filenames_sampled:
-        test_data = np.load(os.path.join(os.path.dirname(csv_file), "processed", filename))
+        test_data = np.load(os.path.join(os.path.dirname(csv_file), filename))
         test_data_with_sos = generator.tokenizer.encode_series(test_data, if_add_sos = True, if_add_eos = False)
         prompts.append(test_data_with_sos[:prompt_len])
         
