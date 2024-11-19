@@ -40,3 +40,11 @@ class lakhmidi_dataset:
     test_split: str = "test"
     data_dir: str = "/data/scratch/acw753/lakhmidi_processed"
     csv_file: str = "/data/scratch/acw753/lakhmidi_processed/train_test_split.csv"
+
+@dataclass
+class merge_dataset:
+    dataset: str = "merge_dataset"
+    train_split: str = "train"
+    test_split: str = "test"
+    data_dir: str = "/data/scratch/acw753/processed_midi"
+    csv_file: str = "/data/scratch/acw753/processed_midi/train_test_split.csv"
