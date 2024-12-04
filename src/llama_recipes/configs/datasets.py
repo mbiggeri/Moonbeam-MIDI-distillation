@@ -46,5 +46,5 @@ class merge_dataset:
     dataset: str = "merge_dataset"
     train_split: str = "train"
     test_split: str = "test"
-    data_dir: str = "/data/scratch/acw753/processed_midi"
-    csv_file: str = "/data/scratch/acw753/processed_midi/train_test_split.csv"
+    data_dir: str = "/data/scratch/acw753/processed_midi_onset_4099_dur_4099"
+    csv_file: str = "/data/scratch/acw753/processed_midi_onset_4099_dur_4099/merged_train_test_split.csv"
