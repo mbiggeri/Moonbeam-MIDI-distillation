@@ -209,7 +209,7 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                             val_step_perplexity.extend(temp_step_perplexity)
 
                         checkpoint_start_time = time.perf_counter()
-                        if train_config.save_model and eval_epoch_loss < best_val_loss:
+                        if train_config.save_model:
                             if train_config.enable_fsdp:
                                 dist.barrier()
                             if train_config.use_peft:
