@@ -60,7 +60,7 @@ def main(
     df = pd.read_csv(csv_file)
 
     # 2. Find the row where 'split' is 'test' and get the corresponding .npy file path
-    test_filenames = df[df['split'] == 'test']['file_base_name'].tolist() 
+    test_filenames = df[df['split'] == 'train']['file_base_name'].tolist() #change from test to train, since there's really no test data in LLM
     test_filenames_sampled = random.sample(test_filenames, num_test_data)
 
     for filename in test_filenames_sampled:
@@ -74,17 +74,20 @@ def main(
         temperature=temperature,
         top_p=top_p,
     )
+
+    save_folder = os.path.join(os.path.dirname(ckpt_dir), f"temperature_{temperature}_top_p_{top_p}")
+    os.makedirs(save_folder, exist_ok=True)
     for i, (dialog, result) in enumerate(zip(prompts, results)):
         for msg in dialog:
             print(f"msg: {msg}")
 
         epoch_step = re.search(r'(\d+-\d+)\.pt$', ckpt_dir).group(1)
         for j, sub_mid in enumerate(result['generation']['content']):
-            sub_mid.save(f'{os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}_{str(j)}.mid')
-        print(f"midis saved at {os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}_x.mid")
+            sub_mid.save(f'{save_folder}/{epoch_step}_{str(i)}_{str(j)}.mid')
+        print(f"midis saved at {save_folder}/{epoch_step}_{str(i)}_x.mid")
         #Also save the prompt 
-        generator.tokenizer.compound_to_midi(dialog[1:]).save(f'{os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}_prompt.mid')
-        print(f"midi prompt saved at {os.path.dirname(ckpt_dir)}/{epoch_step}_{str(i)}_prompt.mid")
+        generator.tokenizer.compound_to_midi(dialog[1:]).save(f'{save_folder}/{epoch_step}_{str(i)}_prompt.mid')
+        print(f"midi prompt saved at {save_folder}/{epoch_step}_{str(i)}_prompt.mid")
         print("\n==================================\n")
 
 
