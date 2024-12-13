@@ -48,3 +48,11 @@ class merge_dataset:
     test_split: str = "test"
     data_dir: str = "/data/scratch/acw753/processed_midi_onset_4099_dur_4099"
     csv_file: str = "/data/scratch/acw753/processed_midi_onset_4099_dur_4099/merged_train_test_split.csv"
+
+@dataclass
+class emophia_con_gen_dataset:
+    dataset: str = "emophia_con_gen_dataset"
+    train_split: str = "train"
+    test_split: str = "test"
+    data_dir: str = "/data/scratch/acw753/finetune/EMOPIA_1.0_1078_clips_con_gen"
+    csv_file: str = "/data/scratch/acw753/finetune/EMOPIA_1.0_1078_clips_con_gen/train_test_split.csv"

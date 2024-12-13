@@ -134,6 +134,48 @@ class MusicTokenizer():
         #4. encode it to labels 
         labels = [self.convert_to_language_tokens(x) for x in output]
         return labels
+    def encode_series_con_gen_emotion(self, raw_token_series, if_add_sos, if_add_eos, emotion_token_4Q = None):
+        # Emo_4Q (total 4 types) + SOS + music_seq + EOS 
+        out = [self.encode_single(x) for x in raw_token_series]
+        if if_add_sos:
+            out = [self.sos_token_compound] + out
+        if emotion_token_4Q is not None:
+            out = [emotion_token_4Q] + out
+        if if_add_eos:
+            out = out + [self.eos_token_compound]
+        return out
+
+    def encode_series_labels_con_gen_emotion(self, encoded_tokens, if_added_sos, if_added_eos, if_added_emotion_token_4Q = None):
+        # Emo_4Q + SOS + music_seq + EOS 
+        encoded_tokens = torch.tensor(encoded_tokens) #temporarily convert to tensor for easier slicing (len, 6)
+        if if_added_emotion_token_4Q:
+            encoded_tokens = encoded_tokens[1:]
+        if if_added_sos:
+            encoded_tokens = encoded_tokens[1:]
+        if if_added_eos:
+            encoded_tokens = encoded_tokens[:-1]
+
+        #1. Convert onsets to delta onsets
+
+        timeshift_labels_raw =  torch.diff(encoded_tokens[:, 0], prepend=torch.tensor([0]))
+        #2. Concat the raw value
+
+        output = torch.cat([torch.zeros(encoded_tokens.shape[0]).unsqueeze(-1) , timeshift_labels_raw.unsqueeze(-1), encoded_tokens[:, 1:]], dim = -1) 
+
+        #3. Add sos and eos label if necessary
+        if if_added_sos: 
+            output = torch.concat([torch.tensor(self.sos_label).unsqueeze(0), output], dim = 0) 
+
+        if if_added_emotion_token_4Q is not None: #emotion token should always followed by the sos token in this task, we can use dummy labels (self.sos_label) for emotion_token_4Q tokens.
+            output = torch.concat([torch.tensor(self.sos_label).unsqueeze(0), output], dim = 0) 
+
+        if if_added_eos:
+            output = torch.concat([output, torch.tensor(self.eos_label).unsqueeze(0)], dim = 0) 
+        output = output.tolist() 
+
+        #4. encode it to labels 
+        labels = [self.convert_to_language_tokens(x) for x in output]
+        return labels
 
     def convert_to_language_tokens(self, x):
         """
@@ -170,7 +212,8 @@ class MusicTokenizer():
         out = torch.tensor(out)
         out = out.view(*original_shape[:-1], -1)
         return out
-
+    def add_new_tokens(self, token_name = "classification_token", token_val = -4):
+        setattr(self, token_name, [token_val for _ in range(6)]) #example token
     def create_dur_dictionary(self):
         """Create a duration dictionary to map duration values to tokens in log scale."""
         dur_vocab_size_wo_soseos = self.dur_vocab_size - 2
