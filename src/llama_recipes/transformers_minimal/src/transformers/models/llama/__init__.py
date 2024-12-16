@@ -55,6 +55,7 @@ else:
         "LlamaModel",
         "LlamaPreTrainedModel",
         "LlamaForSequenceClassification",
+        "LlamaForCausalLM_Conditional_Generation",
         "LlamaForQuestionAnswering",
     ]
 
@@ -98,6 +99,7 @@ if TYPE_CHECKING:
             LlamaForSequenceClassification,
             LlamaModel,
             LlamaPreTrainedModel,
+            LlamaForCausalLM_Conditional_Generation
         )
 
     try:

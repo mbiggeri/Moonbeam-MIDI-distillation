@@ -2289,6 +2289,7 @@ else:
             "LlamaForCausalLM_Baseline",
             "LlamaForQuestionAnswering",
             "LlamaForSequenceClassification",
+            "LlamaForCausalLM_Conditional_Generation",
             "LlamaModel",
             "LlamaPreTrainedModel",
         ]
@@ -6688,6 +6689,7 @@ if TYPE_CHECKING:
             LlamaForCausalLM_Baseline,
             LlamaForQuestionAnswering,
             LlamaForSequenceClassification,
+            LlamaForCausalLM_Conditional_Generation,
             LlamaModel,
             LlamaPreTrainedModel,
         )
