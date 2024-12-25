@@ -30,6 +30,7 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 import torch.distributed._shard.checkpoint as dist_cp
 import torch.distributed as dist
 
+from torch.distributed.checkpoint.state_dict import get_model_state_dict, StateDictOptions
 
 def get_date_of_run():
     """create date and time for file save uniqueness
@@ -304,3 +305,13 @@ def load_sharded_model_single_gpu(model,model_path):
     
     print(f"Sharded state checkpoint loaded from {model_path}")
     return model
+
+def save_peft_checkpoint(model, model_path, epoch=1, step=200):
+    """save_pretrained peft model"""
+    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+        model = model.module  # Access the underlying model
+    options = StateDictOptions(full_state_dict=True, cpu_offload=True)
+    state_dict = get_model_state_dict(model, options=options)
+    save_folder = model_path + "/" + str(epoch) + "-" +str(step)+".safetensors"
+    # model.save_pretrained(model_path, state_dict=state_dict)
+    model.save_pretrained(save_folder, state_dict=state_dict)
