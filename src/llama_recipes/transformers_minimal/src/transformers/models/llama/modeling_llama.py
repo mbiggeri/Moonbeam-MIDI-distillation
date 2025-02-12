@@ -20,7 +20,7 @@
 """PyTorch LLaMA model."""
 
 import math
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Dict
 
 import torch
 import torch.nn.functional as F
@@ -893,6 +893,7 @@ class LlamaSdpaAttention(LlamaAttention):
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        additional_tokens_pos_map: Optional[Dict] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         if output_attentions:
             # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
@@ -930,6 +931,12 @@ class LlamaSdpaAttention(LlamaAttention):
         position_ids_sos = torch.where(where_sos, torch.tensor([0 for _ in range(6)]).to(hidden_states.device), position_ids)
         position_ids_eos = torch.where(where_eos, torch.tensor([2**15 for _ in range(6)]).to(hidden_states.device), position_ids_sos)
         position_ids = position_ids_eos
+
+        #Extend this to new tokens positions
+        if additional_tokens_pos_map is not None:
+            for token_id, pos in additional_tokens_pos_map.items():
+                where_new_token = (position_ids[..., 0] == token_id).unsqueeze(-1)
+                position_ids = torch.where(where_new_token, torch.tensor([pos for _ in range(6)]).to(hidden_states.device), position_ids)
 
         cos_onset, sin_onset = self.rotary_emb_onset(value_states, position_ids[:, :, 0]) #position_ids: batch, len, 6; last dim: (onset, duration, octave, pitch_class, instrument, velocity)
         cos_dur, sin_dur = self.rotary_emb_dur(value_states, position_ids[:, :, 1]) 
@@ -1103,6 +1110,7 @@ class LlamaDecoderLayer(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        additional_tokens_pos_map: Optional[Dict] = None,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -1131,6 +1139,7 @@ class LlamaDecoderLayer(nn.Module):
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
+            additional_tokens_pos_map = additional_tokens_pos_map
         )
         hidden_states = residual + hidden_states
 
@@ -1370,12 +1379,12 @@ class LlamaModel(LlamaPreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
-    def embed_tokens(self, input_ids):
+    def embed_tokens(self, input_ids, additional_token_map = None):
         #(onset, duration, octave, pitch_class, instrument, velocity); batch, len, 6 --> batch, len, dim*6 
         #1. scan through the onset and detect positions of SOS and EOS;         
         #2. where sos --> embed using sos; where eos --> embed using eos, other places embed using FME
         #3. skew them together 
-        
+        #additional_token_map (Optional[dict]): A mapping of new token IDs (key) to embedding indices in supplementary_embedding. Example: {token_id: embedding_index}
         #SOS, EOS tokens are embedded seperately
         sos = self.supplementary_embedding(torch.tensor(0).to(input_ids.device))[None, None, ...].expand(input_ids.size(0), -1, -1) #dim*6 --> 1, 1, dim*6 --> batch, 1, dim*6
         eos = self.supplementary_embedding(torch.tensor(1).to(input_ids.device))[None, None, ...].expand(input_ids.size(0), -1, -1)
@@ -1384,9 +1393,30 @@ class LlamaModel(LlamaPreTrainedModel):
         where_sos = (input_ids[:, :, 0] == self.sos_token).unsqueeze(-1)
         where_eos = (input_ids[:, :, 0] == self.eos_token).unsqueeze(-1)
 
+        # Handle new tokens if provided
+        if additional_token_map is not None:
+            where_new_tokens_dict = {}
+            for token_id in additional_token_map.keys():
+                # Create a mask for the current new token
+                where_new_tokens_dict[token_id] = (input_ids[:, :, 0] == token_id).unsqueeze(-1)  # (batch, seq_len, 1)
+
+            new_token_embeddings = {}
+            for token_id, embed_idx in additional_token_map.items():
+                # Embed using supplementary_embedding
+                new_token_embeddings[token_id] = self.supplementary_embedding_emotion4Q(
+                    torch.tensor(embed_idx).to(input_ids.device)
+                )[None, None, ...].expand(input_ids.size(0), -1, -1)
+
         #Since SOS and EOS are negative number, temporarily change it to 0 to avoid indexing error
         input_ids_tmp = torch.where((where_sos|where_eos), torch.tensor([0 for _ in range(6)]).to(input_ids), input_ids)
 
+        # Also replace new tokens with the same value if additional_token_map is provided
+        if additional_token_map is not None:
+            for token_id, _ in additional_token_map.items():
+                # Detect where the new token is located
+                where_new_token = where_new_tokens_dict[token_id]
+                # Replace the new token in input_ids_tmp
+                input_ids_tmp = torch.where(where_new_token, torch.tensor([0 for _ in range(6)]).to(input_ids), input_ids_tmp)
         onsets = self.onset_embedding(input_ids_tmp[..., 0])
         durs = self.dur_embedding(input_ids_tmp[..., 1])
         octaves = self.octave_embedding(input_ids_tmp[..., 2]) 
@@ -1400,9 +1430,19 @@ class LlamaModel(LlamaPreTrainedModel):
         
         out_fme_sos_eos = torch.where(where_eos, eos, out_fme_sos)
 
+        # Handle new tokens using precomputed embeddings and masks
+        out_final = out_fme_sos_eos  # Start with SOS/EOS-processed embeddings
+        if additional_token_map is not None:
+            for token_id in additional_token_map:
+                # Retrieve the embedding and mask for this new token
+                new_token_embedding = new_token_embeddings[token_id]  # Precomputed embedding
+                where_new_token = where_new_tokens_dict[token_id]  # Precomputed mask
+
+                # Replace embeddings for the current new token
+                out_final = torch.where(where_new_token, new_token_embedding, out_final)
         #Additional non-linearity to the embeddings
 
-        out_final = self.supplementary_MLP(out_fme_sos_eos)
+        out_final = self.supplementary_MLP(out_final)
 
         return out_final
     def get_input_embeddings(self):
@@ -1415,6 +1455,7 @@ class LlamaModel(LlamaPreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
+        additional_tokens_pos_map: Optional[Dict] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
@@ -1442,9 +1483,18 @@ class LlamaModel(LlamaPreTrainedModel):
                 "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
             )
             use_cache = False
-
+        """
+        
+        additional_tokens_pos_map:{new_token1: pos1, new_token2: pos2, ...} #TODO: think of a better name
+        
+        """
         if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids) #batch, len, 6 --> batch, len, dim*6
+            if additional_tokens_pos_map is not None: #additional_tokens_pos
+                # additional_token_map = {additional_tokens[i]: i for i in range(len(additional_tokens))}
+                additional_token_map = {token_id: i for i, token_id in enumerate(additional_tokens_pos_map.keys())}
+            else:
+                additional_token_map = None
+            inputs_embeds = self.embed_tokens(input_ids, additional_token_map = additional_token_map) #batch, len, 6 --> batch, len, dim*6
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):  # kept for BC (non `Cache` `past_key_values` inputs)
             return_legacy_cache = True
@@ -1494,6 +1544,7 @@ class LlamaModel(LlamaPreTrainedModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
+                    additional_tokens_pos_map = additional_tokens_pos_map
                 )
 
             hidden_states = layer_outputs[0]
@@ -1573,6 +1624,10 @@ class LlamaModel(LlamaPreTrainedModel):
             attention_mask = attention_mask.unsqueeze(1) #unsqueeze in head dimension: batch, len, len
             return attention_mask 
 
+    def add_supplementary_embedding(self, num_tokens, embedding_name, hidden_size):
+        new_embedding = nn.Embedding(num_tokens, hidden_size)
+        new_embedding.require_grad = True
+        setattr(self, embedding_name, new_embedding)
 
 class LlamaForCausalLM(LlamaPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
@@ -1697,6 +1752,324 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
                 cache_position=cache_position,
+            )
+            hidden_states = outputs[0]
+            logits = hidden_states
+            logits_shrinked = self.summary_projection(hidden_states) #batch, len, dim --> batch, len, decoder_hidden_size
+
+        elif input_ids is None and decoded_hidden_state is not None: #inference
+            hidden_states = decoded_hidden_state
+        else:
+            print("warning You cannot provide input_ids and input_ids_encoded at the same time!", )
+            # assert False, "You cannot provide input_ids and input_ids_encoded at the same time!"
+        logits = None
+        loss = None
+        generation_logits = None
+        generation_hidden_state = None
+        if labels is not None: #if label exists: during training/evaluation --> teacher forcing, return loss;
+            shift_logits_x = logits_shrinked[..., :-1, :].contiguous() #batch, len_x-1, dim
+            shift_labels_x = labels[..., 1:, :].contiguous().to(logits_shrinked.device)
+
+            if self.decoder_attn_implementation == "output": #DANGEROURS: here shift labels does not contain SOS_decoding token 
+                # 1. get the "SOS" token for each decoding step
+                music_summary = shift_logits_x.view(-1, shift_logits_x.shape[-1]).unsqueeze(1) #batch*(len_x-1), 1, dim 
+                
+                #2. shift the labels and concat with intermediate "SOS" tokens: music summary
+                shift_labels_x = shift_labels_x.view(-1, shift_labels_x.shape[-1]) #batch*(len_x-1), onset_vocab_size + dur_size + .. + vel_size / batch*(len_x-1), len_y
+                
+
+                shift_labels_x_y_encoded = self.decoder_embedding(shift_labels_x[:, :-1]) #batch*(len_x-1), len_y-1, dim
+                decoder_input = torch.concat([music_summary, shift_labels_x_y_encoded], dim = 1) #batch*(len_x-1), len_y, dim
+
+
+                generation_logits = self.decoder(
+                    input_ids=None,
+                    attention_mask=None, 
+                    position_ids=None,
+                    past_key_values=None,
+                    inputs_embeds=decoder_input,
+                    use_cache=False,
+                    output_attentions=False,
+                    output_hidden_states=False,
+                    return_dict=False,
+                    cache_position=None)
+            elif self.decoder_attn_implementation == "MLP": #DANGEROURS: here shift labels does not contain SOS_decoding token 
+
+                music_summary = shift_logits_x.view(-1, shift_logits_x.shape[-1]) #batch*(len_x-1), dim 
+                generation_logits = self.decoder(music_summary) #batch*(len_x-1), len_y*dim 
+                generation_logits = generation_logits.view(music_summary.shape[0], shift_labels_x.shape[-1], -1) #batch*(len_x-1), len_y, decode_vocab_size
+                generation_logits = [generation_logits]
+            
+            elif self.decoder_attn_implementation == "GRU": #DANGEROURS: here shift labels contain SOS_decoding token / does not need EOS?
+                shift_logits_x_flattened = shift_logits_x.view(-1, shift_logits_x.shape[-1]) #batch*(len_x-1), dim 
+                shift_labels_x_flattened = shift_labels_x.view(-1, shift_labels_x.shape[-1]) #batch*(len_x-1), onset_vocab_size + dur_size + .. + vel_size / batch*(len_x-1), len_y
+                
+                shift_labels_x_y = shift_labels_x_flattened[:, 1:].contiguous() #batch*(len_x-1), len_y-1(1:)
+                
+                shift_labels_x_y_encoded = self.decoder_embedding(shift_labels_x_flattened[:, :-1]) #batch*(len_x-1), len_y-1(:-1), dim
+                generation_logits, generation_hidden_state = self.decoder(shift_labels_x_y_encoded, shift_logits_x_flattened.unsqueeze(0).expand(self.decoder.num_hidden_layers, -1, -1)) #batch*(len_x-1), len_y-1, decode_vocab_size
+
+                generation_logits = [generation_logits]
+
+            elif self.decoder_attn_implementation == "LSTM": #DANGEROURS: here shift labels contain SOS_decoding token 
+                print("not yet implemented")
+
+            generation_logits= self.lm_head(generation_logits[0]).float().view(-1, self.config.decode_vocab_size)
+            shift_labels_x_y = shift_labels_x_y.view(-1)
+            loss = self.loss_func(generation_logits, shift_labels_x_y)
+        elif decoded_language_tokens is not None and decoded_hidden_state is not None: #else during inference (decoding)--> inference autoregressively, return generated tokens
+            if self.decoder_attn_implementation == "GRU":              
+                decoded_language_tokens_encoded = self.decoder_embedding(decoded_language_tokens)##batch*len_x, len_y--> batch*lenx, len_y, dim
+                generation_logits_flattened, generation_hidden_state_flattened = self.decoder(decoded_language_tokens_encoded, decoded_hidden_state) #output: batch*len_x, len_y, dim ,  hidden state: num_layers, batch*len_x, dim
+                
+                generation_logits = generation_logits_flattened.view(decoded_language_tokens_encoded.shape[0],decoded_language_tokens_encoded.shape[1], -1) #batch*len_x, len_y, decode_vocab_size
+                generation_hidden_state = generation_hidden_state_flattened.view(self.decoder.num_hidden_layers, decoded_language_tokens_encoded.shape[0], -1) #num_layers, batch*len_x, dim
+                generation_logits= self.lm_head(generation_logits)
+                generation_logits = generation_logits.float()
+                logits_shrinked = None
+
+
+        #final todo: return logits intermediate, loss, and decoded tokens 
+        
+
+        if not return_dict:
+            output = (logits,generation_logits) + outputs[1:]
+            return (loss, logits) + output if loss is not None else output 
+        if input_ids is not None and input_ids_encoded is None: #during training and evaluation
+            return CausalLMOutputWithPast(
+                loss=loss,
+                logits=logits_shrinked,
+                generation_logits=generation_logits,
+                generation_hidden_state=generation_hidden_state,
+                past_key_values=outputs.past_key_values,
+                hidden_states=outputs.hidden_states,
+                attentions=outputs.attentions, 
+            )
+        else: #during inference
+            return CausalLMOutputWithPast(
+                loss=loss,
+                logits=logits_shrinked,
+                generation_logits=generation_logits,
+                generation_hidden_state=generation_hidden_state,
+                past_key_values=None,
+                hidden_states=None,
+                attentions=None, 
+            )        
+
+    def prepare_inputs_for_generation(
+        self,
+        input_ids,
+        past_key_values=None,
+        attention_mask=None,
+        inputs_embeds=None,
+        cache_position=None,
+        use_cache=True,
+        **kwargs,
+    ):
+        past_length = 0
+        if past_key_values is not None:
+            if isinstance(past_key_values, Cache):
+                past_length = cache_position[0] if cache_position is not None else past_key_values.get_seq_length()
+                max_cache_length = (
+                    torch.tensor(past_key_values.get_max_length(), device=input_ids.device)
+                    if past_key_values.get_max_length() is not None
+                    else None
+                )
+                cache_length = past_length if max_cache_length is None else torch.min(max_cache_length, past_length)
+            # TODO joao: remove this `else` after `generate` prioritizes `Cache` objects
+            else:
+                cache_length = past_length = past_key_values[0][0].shape[2]
+                max_cache_length = None
+
+            # Keep only the unprocessed tokens:
+            # 1 - If the length of the attention_mask exceeds the length of input_ids, then we are in a setting where
+            # some of the inputs are exclusively passed as part of the cache (e.g. when passing input_embeds as input)
+            if attention_mask is not None and attention_mask.shape[1] > input_ids.shape[1]:
+                input_ids = input_ids[:, -(attention_mask.shape[1] - past_length) :]
+            # 2 - If the past_length is smaller than input_ids', then input_ids holds all input tokens. We can discard
+            # input_ids based on the past_length.
+            elif past_length < input_ids.shape[1]:
+                input_ids = input_ids[:, past_length:]
+            # 3 - Otherwise (past_length >= input_ids.shape[1]), let's assume input_ids only has unprocessed tokens.
+
+            # If we are about to go beyond the maximum cache length, we need to crop the input attention mask.
+            if (
+                max_cache_length is not None
+                and attention_mask is not None
+                and cache_length + input_ids.shape[1] > max_cache_length
+            ):
+                attention_mask = attention_mask[:, -max_cache_length:]
+
+        position_ids = kwargs.get("position_ids", None)
+        if attention_mask is not None and position_ids is None:
+            # create position_ids on the fly for batch generation
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+            if past_key_values:
+                position_ids = position_ids[:, -input_ids.shape[1] :]
+
+        # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
+        if inputs_embeds is not None and past_key_values is None:
+            model_inputs = {"inputs_embeds": inputs_embeds}
+        else:
+            # The `contiguous()` here is necessary to have a static stride during decoding. torchdynamo otherwise
+            # recompiles graphs as the stride of the inputs is a guard. Ref: https://github.com/huggingface/transformers/pull/29114
+            # TODO: use `next_tokens` directly instead.
+            model_inputs = {"input_ids": input_ids.contiguous()}
+
+        input_length = position_ids.shape[-1] if position_ids is not None else input_ids.shape[-1]
+        if cache_position is None:
+            cache_position = torch.arange(past_length, past_length + input_length, device=input_ids.device)
+        elif use_cache:
+            cache_position = cache_position[-input_length:]
+
+        model_inputs.update(
+            {
+                "position_ids": position_ids,
+                "cache_position": cache_position,
+                "past_key_values": past_key_values,
+                "use_cache": use_cache,
+                "attention_mask": attention_mask,
+            }
+        )
+        return model_inputs
+
+    @staticmethod
+    def _reorder_cache(past_key_values, beam_idx):
+        reordered_past = ()
+        for layer_past in past_key_values:
+            reordered_past += (
+                tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past),
+            )
+        return reordered_past
+
+class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
+    _tied_weights_keys = ["lm_head.weight"]
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.model = LlamaModel(config)
+
+        self.model.add_supplementary_embedding(num_tokens = len(config.emotion_token_pos_map.keys()), embedding_name = "supplementary_embedding_emotion4Q", hidden_size = config.hidden_size)
+        self.additional_tokens_pos_map = {int(key): value for key, value in config.emotion_token_pos_map.items()}
+
+        output_decoder_config= {k: v for k, v in config.decoder.items()}
+        decoder_config = LlamaConfig.from_dict(output_decoder_config)
+        self.attn_implementation = config._attn_implementation #this determines whether or not to apply music RoPE
+        self.decoder_attn_implementation = decoder_config._attn_implementation
+        self.decoder = DECODING_METHODS[decoder_config._attn_implementation](decoder_config)
+
+        #TODO: add projection layer to shrink the size! nn.Embedding(config.decode_vocab_size, config.decoder.hidden_size)
+        self.decoder_embedding = nn.Embedding(config.decode_vocab_size, config.decoder["hidden_size"])
+        self.summary_projection = nn.Linear(config.hidden_size, config.decoder["hidden_size"], bias=False) 
+        #TODO: add projection layer to shrink the size! nn.Embedding(config.decoder.hidden_size, config.decode_vocab_size)
+        self.lm_head = nn.Linear(config.decoder["hidden_size"], config.decode_vocab_size, bias=False) 
+
+
+        # # Initialize weights array with ones
+        # weights = torch.ones(self.config.decode_vocab_size)
+
+        # # Set weight for onset=0 to 0.5
+        # weights[0] = 0.5
+
+        # # Set weight for the rest of the classes to 1.0
+        # weights[1:] = 1.0
+        # weights = weights.float()
+        # print(f"check weight? {weights.dtype}") #torch.float32
+        # self.loss_func = CrossEntropyLoss(weight=weights)
+        
+        self.loss_func = CrossEntropyLoss()
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def get_input_embeddings(self):
+        return self.model.embed_tokens
+
+    def set_input_embeddings(self, value):
+        self.model.embed_tokens = value
+
+    def get_output_embeddings(self):
+        return self.lm_head
+
+    def set_output_embeddings(self, new_embeddings):
+        self.lm_head = new_embeddings
+
+    def set_decoder(self, decoder):
+        self.model = decoder
+
+    def get_decoder(self):
+        return self.model
+
+    @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
+    @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None, # need to be provided during training/evaluation
+        input_ids_encoded: Optional[torch.Tensor] = None, # need to be provided during inference
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
+        past_key_values_decoder: Optional[Union[Cache, List[torch.FloatTensor]]] = None, #TODO: add another cache for decoder
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+		decoded_language_tokens: Optional[torch.LongTensor] = None,
+        decoded_hidden_state: Optional[torch.LongTensor] = None, #batch, len, dim
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+    ) -> Union[Tuple, CausalLMOutputWithPast]:
+        r"""
+        Args:
+            labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+                Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
+                config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
+                (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
+
+        Returns:
+
+        Example:
+
+        ```python
+        >>> from transformers import AutoTokenizer, LlamaForCausalLM
+
+        >>> model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf")
+        >>> tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+
+        >>> prompt = "Hey, are you conscious? Can you talk to me?"
+        >>> inputs = tokenizer(prompt, return_tensors="pt")
+
+        >>> # Generate
+        >>> generate_ids = model.generate(inputs.input_ids, max_length=30)
+        >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
+        ```"""
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        #outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
+        if input_ids is not None and decoded_hidden_state is None: #training/evaluation
+            if self.attn_implementation == "sdpa":
+                position_ids = input_ids
+            elif self.attn_implementation == "sdpa_baseline":
+                position_ids = position_ids
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids, #if sdpa: position_ids carry information about onset, dur, pitch, instr, vel; elif sdpa_baseline: position_ids are None
+                past_key_values=past_key_values,
+                inputs_embeds=inputs_embeds,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+                cache_position=cache_position,
+                additional_tokens_pos_map=self.additional_tokens_pos_map
             )
             hidden_states = outputs[0]
             logits = hidden_states
