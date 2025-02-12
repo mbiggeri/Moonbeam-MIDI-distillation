@@ -12,6 +12,7 @@ import time
 from transformers import (
     AutoTokenizer,
     LlamaForCausalLM,
+    LlamaForCausalLM_Conditional_Generation,
     LlamaConfig,
 )
 from llama_recipes.datasets.music_tokenizer import MusicTokenizer
@@ -191,6 +192,92 @@ class MusicLlama:
 
         return MusicLlama(model, tokenizer, llama_config)
 
+    @staticmethod
+    def build_emo_con_gen(
+        ckpt_dir: str,
+        model_config_path: str,
+        tokenizer_path: str,
+        max_seq_len: int,
+        max_batch_size: int,
+        model_parallel_size: Optional[int] = None,
+        seed: int = 1,
+        finetuned_PEFT_weight_path: Optional[str] = None,
+    ) -> "MusicLlama":
+        """
+        Build a Llama instance by initializing and loading a model checkpoint.
+
+        Args:
+            ckpt_dir (str): Path to the directory containing checkpoint files.
+            tokenizer_path (str): Path to the tokenizer file.
+            max_seq_len (int): Maximum sequence length for input text.
+            max_batch_size (int): Maximum batch size for inference.
+            model_parallel_size (Optional[int], optional): Number of model parallel processes.
+                If not provided, it's determined from the environment. Defaults to None.
+
+        Returns:
+            Llama: An instance of the Llama class with the loaded model and tokenizer.
+
+        Raises:
+            AssertionError: If there are no checkpoint files in the specified directory,
+                or if the model parallel size does not match the number of checkpoint files.
+
+        Note:
+            This method initializes the distributed process group, sets the device to CUDA,
+            and loads the pre-trained model and tokenizer.
+        """
+
+        # Set the seeds for reproducibility
+        if is_xpu_available():
+            torch.xpu.manual_seed(seed)
+        else:
+            torch.cuda.manual_seed(seed)
+        torch.manual_seed(seed)
+
+        llama_config = LlamaConfig.from_pretrained(model_config_path)
+        model = LlamaForCausalLM_Conditional_Generation(llama_config) 
+        start_time = time.time()
+
+        #TODO: if peft model then load differently
+        checkpoint = torch.load(ckpt_dir)
+        checkpoint = checkpoint['model_state_dict']
+        new_state_dict = {}
+        for k, v in checkpoint.items():
+            if k.startswith('module.'): # Check if the keys have 'module.' prefix and remove it if necessary
+                new_state_dict[k[7:]] = v
+            else:
+                new_state_dict[k] = v
+        missing_keys, unexpected_keys = model.load_state_dict(new_state_dict, strict=False)
+        print(f"when loading checkpoint, encounter missing keys: {missing_keys}; unexpected_keys:{unexpected_keys}")
+        # model.load_state_dict(new_state_dict) # Load the weights
+        
+        if finetuned_PEFT_weight_path is not None:
+            from peft import PeftModel
+            model = PeftModel.from_pretrained(model, finetuned_PEFT_weight_path)
+            print("PEFT model loaded successfully")
+
+        if is_xpu_available():
+            model.to("xpu")
+        else:
+            model.to("cuda")
+        model.eval()
+
+        tokenizer = MusicTokenizer(timeshift_vocab_size = llama_config.onset_vocab_size, dur_vocab_size = llama_config.dur_vocab_size, octave_vocab_size = llama_config.octave_vocab_size, pitch_class_vocab_size = llama_config.pitch_class_vocab_size, instrument_vocab_size = llama_config.instrument_vocab_size, velocity_vocab_size = llama_config.velocity_vocab_size)
+        if hasattr(llama_config, "emotion_token_pos_map"):
+            tokenizer.add_new_tokens(token_name = "emotion_token_4Q1", token_val = llama_config.emotion_token_4Q1)
+            tokenizer.add_new_tokens(token_name = "emotion_token_4Q2", token_val = llama_config.emotion_token_4Q2)
+            tokenizer.add_new_tokens(token_name = "emotion_token_4Q3", token_val = llama_config.emotion_token_4Q3)
+            tokenizer.add_new_tokens(token_name = "emotion_token_4Q4", token_val = llama_config.emotion_token_4Q4)
+        if torch.cuda.is_bf16_supported():
+            torch.set_default_tensor_type(torch.cuda.BFloat16Tensor)
+            model = model.to(torch.bfloat16)  # Explicitly cast the entire model to BF16 precision. TODO: whether or not cast in bf16
+            print("model precision set to BF16")
+        else:
+            torch.set_default_tensor_type(torch.cuda.HalfTensor)  #this throws me exeptions!  TODO: think what to do about it
+
+        print(f"Loaded in {time.time() - start_time:.2f} seconds")
+
+        return MusicLlama(model, tokenizer, llama_config)
+
     def __init__(self, model, tokenizer, config):
         self.model = model
         self.tokenizer = tokenizer
@@ -205,6 +292,7 @@ class MusicLlama:
         top_p: float = 0.9,
         logprobs: bool = False,
         echo: bool = False,
+        condition_token_length: int = 1,
     ) -> Tuple[List[List[int]], Optional[List[List[float]]]]:
         """
         Generate text sequences based on provided prompts using the language generation model.
@@ -325,7 +413,7 @@ class MusicLlama:
             if all(eos_reached): #wait until all sequences reach eos
                 print("eos reached!")
                 break 
-        tokens = tokens[:, 1:, :] #remove SOS token
+        tokens = tokens[:, condition_token_length:, :] #remove SOS token
 
          #TODO: in the future, return logprob
         out_tokens, out_logprobs = [], []
@@ -357,6 +445,7 @@ class MusicLlama:
         top_p: float = 0.9,
         max_gen_len: Optional[int] = None,
         logprobs: bool = False,
+        condition_token_length: int = 1,
     ) -> List[ChatPrediction]:
         """
         Generate assistant responses for a list of conversational dialogs using the language generation model.
@@ -389,7 +478,8 @@ class MusicLlama:
             temperature=temperature,
             top_p=top_p,
             logprobs=logprobs,
-            echo = True
+            echo = True,
+            condition_token_length = condition_token_length
         )
         #Post processing: if the generated tokens have more than 15 channels, split the generation tokens into multiple parts of at most 15 channels 
         generation_tokens_post_proc = []
