@@ -893,7 +893,7 @@ class LlamaSdpaAttention(LlamaAttention):
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
-        additional_tokens_pos_map: Optional[Dict] = None,
+        additional_token_map: Optional[Dict] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         if output_attentions:
             # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
@@ -933,10 +933,10 @@ class LlamaSdpaAttention(LlamaAttention):
         position_ids = position_ids_eos
 
         #Extend this to new tokens positions
-        if additional_tokens_pos_map is not None:
-            for token_id, pos in additional_tokens_pos_map.items():
+        if additional_token_map is not None:
+            for token_id in additional_token_map:
                 where_new_token = (position_ids[..., 0] == token_id).unsqueeze(-1)
-                position_ids = torch.where(where_new_token, torch.tensor([pos for _ in range(6)]).to(hidden_states.device), position_ids)
+                position_ids = torch.where(where_new_token, torch.tensor([0 for _ in range(6)]).to(hidden_states.device), position_ids)
 
         cos_onset, sin_onset = self.rotary_emb_onset(value_states, position_ids[:, :, 0]) #position_ids: batch, len, 6; last dim: (onset, duration, octave, pitch_class, instrument, velocity)
         cos_dur, sin_dur = self.rotary_emb_dur(value_states, position_ids[:, :, 1]) 
@@ -1110,7 +1110,7 @@ class LlamaDecoderLayer(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
-        additional_tokens_pos_map: Optional[Dict] = None,
+        additional_token_map: Optional[Dict] = None,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -1139,7 +1139,7 @@ class LlamaDecoderLayer(nn.Module):
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
-            additional_tokens_pos_map = additional_tokens_pos_map
+            additional_token_map = additional_token_map
         )
         hidden_states = residual + hidden_states
 
@@ -1403,7 +1403,7 @@ class LlamaModel(LlamaPreTrainedModel):
             new_token_embeddings = {}
             for token_id, embed_idx in additional_token_map.items():
                 # Embed using supplementary_embedding
-                new_token_embeddings[token_id] = self.supplementary_embedding_emotion4Q(
+                new_token_embeddings[token_id] = self.supplementary_embedding_metadata(
                     torch.tensor(embed_idx).to(input_ids.device)
                 )[None, None, ...].expand(input_ids.size(0), -1, -1)
 
@@ -1412,7 +1412,7 @@ class LlamaModel(LlamaPreTrainedModel):
 
         # Also replace new tokens with the same value if additional_token_map is provided
         if additional_token_map is not None:
-            for token_id, _ in additional_token_map.items():
+            for token_id in additional_token_map:
                 # Detect where the new token is located
                 where_new_token = where_new_tokens_dict[token_id]
                 # Replace the new token in input_ids_tmp
@@ -1455,7 +1455,7 @@ class LlamaModel(LlamaPreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        additional_tokens_pos_map: Optional[Dict] = None,
+        additional_tokens_list: Optional[List[int]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
@@ -1483,15 +1483,10 @@ class LlamaModel(LlamaPreTrainedModel):
                 "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
             )
             use_cache = False
-        """
-        
-        additional_tokens_pos_map:{new_token1: pos1, new_token2: pos2, ...} #TODO: think of a better name
-        
-        """
+
         if inputs_embeds is None:
-            if additional_tokens_pos_map is not None: #additional_tokens_pos
-                # additional_token_map = {additional_tokens[i]: i for i in range(len(additional_tokens))}
-                additional_token_map = {token_id: i for i, token_id in enumerate(additional_tokens_pos_map.keys())}
+            if additional_tokens_list is not None: #additional_tokens_pos
+                additional_token_map = {token_id: i for i, token_id in enumerate(additional_tokens_list)}
             else:
                 additional_token_map = None
             inputs_embeds = self.embed_tokens(input_ids, additional_token_map = additional_token_map) #batch, len, 6 --> batch, len, dim*6
@@ -1544,7 +1539,7 @@ class LlamaModel(LlamaPreTrainedModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
-                    additional_tokens_pos_map = additional_tokens_pos_map
+                    additional_token_map = additional_token_map
                 )
 
             hidden_states = layer_outputs[0]
@@ -1950,8 +1945,7 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
         super().__init__(config)
         self.model = LlamaModel(config)
 
-        self.model.add_supplementary_embedding(num_tokens = len(config.emotion_token_pos_map.keys()), embedding_name = "supplementary_embedding_emotion4Q", hidden_size = config.hidden_size)
-        self.additional_tokens_pos_map = {int(key): value for key, value in config.emotion_token_pos_map.items()}
+        self.model.add_supplementary_embedding(num_tokens = len(config.metadata_tokens), embedding_name = "supplementary_embedding_metadata", hidden_size = config.hidden_size) #commu_specific, add soc, eoc and metadata tokens
 
         output_decoder_config= {k: v for k, v in config.decoder.items()}
         decoder_config = LlamaConfig.from_dict(output_decoder_config)
@@ -2069,7 +2063,7 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
                 cache_position=cache_position,
-                additional_tokens_pos_map=self.additional_tokens_pos_map
+                additional_tokens_list=self.config.metadata_tokens
             )
             hidden_states = outputs[0]
             logits = hidden_states
@@ -2087,6 +2081,26 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
         if labels is not None: #if label exists: during training/evaluation --> teacher forcing, return loss;
             shift_logits_x = logits_shrinked[..., :-1, :].contiguous() #batch, len_x-1, dim
             shift_labels_x = labels[..., 1:, :].contiguous().to(logits_shrinked.device)
+
+            #gather logits between each sos and eos token 
+            batch_size, seq_len, _ = input_ids.shape
+            
+            logits_list = []
+            labels_list = []
+
+            for batch_idx in range(batch_size):
+                # Find the indices of the `sos` and `eos` tokens in the current sequence
+                seq_indices_sos = (input_ids[batch_idx, :, 0] == self.sos_token).nonzero(as_tuple=True)[0].item()
+                seq_indices_eos = (input_ids[batch_idx, :,0] == self.eos_token).nonzero(as_tuple=True)[0].item()
+                
+                # Gather logits between `sos` and `eos` tokens (exclusive of `sos` and `eos` themselves)
+                logits_between_sos_eos = shift_logits_x[batch_idx, seq_indices_sos : seq_indices_eos]
+                labels_between_sos_eos = shift_labels_x[batch_idx, seq_indices_sos : seq_indices_eos]
+                logits_list.append(logits_between_sos_eos)
+                labels_list.append(labels_between_sos_eos)
+
+            shift_logits_x = torch.cat(logits_list, dim = 0) #..., dim
+            shift_labels_x = torch.cat(labels_list, dim = 0) #..., onset_vocab_size + dur_size + .. + vel_size
 
             if self.decoder_attn_implementation == "output": #DANGEROURS: here shift labels does not contain SOS_decoding token 
                 # 1. get the "SOS" token for each decoding step
