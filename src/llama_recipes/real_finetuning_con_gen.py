@@ -28,7 +28,7 @@ from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 from llama_recipes.configs import fsdp_config as FSDP_CONFIG
 from llama_recipes.configs import ddp_config as DDP_CONFIG
 from llama_recipes.configs import train_config as TRAIN_CONFIG
-from llama_recipes.data.concatenator import ConcatDataset
+from llama_recipes.data.concatenator import ConcatDataset, ConcatDataset_dummy_padding
 from llama_recipes.policies import AnyPrecisionAdamW, apply_fsdp_checkpointing
 from llama_recipes.model_checkpointing import load_model_checkpoint_ddp
 
@@ -269,7 +269,7 @@ def main(**kwargs):
         split="test",
     )
     if train_config.batching_strategy == "packing":
-        dataset_train = ConcatDataset(dataset_train, chunk_size=train_config.context_length, split="train",data_dir = dataset_config.data_dir) #TODO: commu specific, think whether use this type of concatenation, data are sliced into chunks, so for best performance, better not use this 
+        dataset_train = ConcatDataset_dummy_padding(dataset_train, chunk_size=train_config.context_length, split="train",data_dir = dataset_config.data_dir)
 
     train_dl_kwargs = get_dataloader_kwargs(train_config, dataset_train, tokenizer, "train")
 
@@ -284,7 +284,7 @@ def main(**kwargs):
     eval_dataloader = None
     if train_config.run_validation:
         if train_config.batching_strategy == "packing":
-            dataset_val = ConcatDataset(dataset_val, chunk_size=train_config.context_length, split="val", data_dir = dataset_config.data_dir ) #TODO: commu specific, think whether use this type of concatenation, data are sliced into chunks, so for best performance, better not use this 
+            dataset_val = ConcatDataset_dummy_padding(dataset_val, chunk_size=train_config.context_length, split="val", data_dir = dataset_config.data_dir ) 
 
         val_dl_kwargs = get_dataloader_kwargs(train_config, dataset_val, tokenizer, "val")
 

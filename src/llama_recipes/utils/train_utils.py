@@ -209,7 +209,7 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                             val_step_perplexity.extend(temp_step_perplexity)
 
                         checkpoint_start_time = time.perf_counter()
-                        if train_config.save_model:
+                        if train_config.save_model and eval_epoch_loss < best_val_loss:
                             if train_config.enable_fsdp:
                                 dist.barrier()
                             if train_config.use_peft:
@@ -759,10 +759,10 @@ def train_con_gen(model, train_dataloader,eval_dataloader, tokenizer, optimizer,
                 
                     #TODO: More frequent evaluation; Remember to switch on model.train again
                     if step%train_config.validation_interval==0:
-                        """eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = evaluation(model, train_config, eval_dataloader, local_rank, tokenizer, wandb_run)
+                        eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = evaluation(model, train_config, eval_dataloader, local_rank, tokenizer, wandb_run)
                         if train_config.save_metrics:
                             val_step_loss.extend(temp_val_loss)
-                            val_step_perplexity.extend(temp_step_perplexity)"""
+                            val_step_perplexity.extend(temp_step_perplexity)
 
                         checkpoint_start_time = time.perf_counter()
                         if train_config.save_model:
@@ -819,7 +819,7 @@ def train_con_gen(model, train_dataloader,eval_dataloader, tokenizer, optimizer,
                                 dist.barrier()
                         checkpoint_end_time = time.perf_counter() - checkpoint_start_time
                         checkpoint_times.append(checkpoint_end_time)
-                        """if eval_epoch_loss < best_val_loss:
+                        if eval_epoch_loss < best_val_loss:
                             best_val_loss = eval_epoch_loss
                             if train_config.enable_fsdp or train_config.enable_ddp:
                                 if rank==0:
@@ -827,10 +827,10 @@ def train_con_gen(model, train_dataloader,eval_dataloader, tokenizer, optimizer,
                             else:
                                 print(f"best eval loss on epoch {epoch} is {best_val_loss}")
                         val_loss.append(float(best_val_loss))
-                        val_prep.append(float(eval_ppl))  """   
+                        val_prep.append(float(eval_ppl))    
 
-                        """IMPORTANT        
-                        model.train()""" 
+                        #IMPORTANT        
+                        model.train()
                 
                 
                 
