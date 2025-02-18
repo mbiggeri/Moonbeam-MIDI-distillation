@@ -7,3 +7,4 @@ from llama_recipes.datasets.samsum_dataset import get_preprocessed_samsum as get
 from llama_recipes.datasets.lakh_dataset import LakhDataset as get_lakhmidi_dataset
 from llama_recipes.datasets.merge_dataset import MergeDataset as get_merge_dataset
 from llama_recipes.datasets.emophia_con_gen_dataset import Emophia_Con_Gen_Datasets as get_emophia_con_gen_dataset
+from llama_recipes.datasets.commu_con_gen_dataset import Commu_Con_Gen_Datasets as get_commu_con_gen_dataset
