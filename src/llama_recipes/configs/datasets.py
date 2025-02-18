@@ -56,3 +56,13 @@ class emophia_con_gen_dataset:
     test_split: str = "test"
     data_dir: str = "/data/scratch/acw753/finetune/EMOPIA_1.0_1078_clips_con_gen"
     csv_file: str = "/data/scratch/acw753/finetune/EMOPIA_1.0_1078_clips_con_gen/train_test_split.csv"
+
+@dataclass
+class commu_con_gen_dataset:
+    dataset: str = "commu_con_gen_dataset"
+    train_split: str = "train"
+    test_split: str = "val"
+    data_dir: str = "/data/scratch/acw753/finetune/commu_con_gen"
+    csv_file: str = "/data/scratch/acw753/finetune/commu_con_gen/train_test_split.csv"
+    additional_token_dict_path: str = "/data/scratch/acw753/datasets/commu/commu_midi/indexed_tokens_dict.json"
+    

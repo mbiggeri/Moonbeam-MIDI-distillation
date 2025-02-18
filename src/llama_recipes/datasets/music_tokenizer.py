@@ -177,6 +177,49 @@ class MusicTokenizer():
         labels = [self.convert_to_language_tokens(x) for x in output]
         return labels
 
+    def encode_series_con_gen_commu(self, raw_token_series, raw_chord_series, metadata_tokens, if_only_keep_condition_tokens = False):
+        # meta_data_tokens,<SOC> chords, <EOC>, <SOS> music_seq, <EOS>     
+        out = [self.encode_single(x) for x in raw_token_series]
+        out_chord = [self.encode_single(x) for x in raw_chord_series]
+        
+        out = [self.sos_token_compound] + out
+
+        out = out + [self.eos_token_compound]
+    
+        out_chord = [self.soc_token_compound] + out_chord
+
+        out_chord = out_chord + [self.eoc_token_compound]
+
+        if if_only_keep_condition_tokens: #Used during inference
+            return metadata_tokens + out_chord + [self.sos_token_compound]
+        else:   
+            return metadata_tokens + out_chord + out
+
+    def encode_series_labels_con_gen_commu(self, encoded_tokens):
+        # meta_data_tokens,<SOC> chords, <EOC>, <SOS> music_seq, <EOS>   
+        encoded_tokens = torch.tensor(encoded_tokens) #temporarily convert to tensor for easier slicing (len, 6)
+        #first retrieve only the music_seq, retrieve the segment between [self.sos_token_compound] and [self.sos_token_compound]
+        # Ensure the comparison results in a tensor
+        sos_idx = (encoded_tokens == torch.tensor(self.sos_token_compound)).all(dim=1).nonzero(as_tuple=True)[0]
+        eos_idx = (encoded_tokens == torch.tensor(self.eos_token_compound)).all(dim=1).nonzero(as_tuple=True)[0]
+        encoded_tokens = encoded_tokens[sos_idx[0]+1:eos_idx[0]]
+
+        #1. Convert onsets to delta onsets
+        timeshift_labels_raw =  torch.diff(encoded_tokens[:, 0], prepend=torch.tensor([0]))
+        #2. Concat the raw value
+
+        output = torch.cat([torch.zeros(encoded_tokens.shape[0]).unsqueeze(-1) , timeshift_labels_raw.unsqueeze(-1), encoded_tokens[:, 1:]], dim = -1).tolist()
+
+        #3. Add sos and eos label 
+        output = [self.sos_label] + output + [self.eos_label]
+
+        output = [self.sos_label for _ in range(sos_idx[0])]  + output #since we are not really predicting the chord and metadata tokens, we can use dummy labels (self.sos_label) for these tokens
+
+        #4. encode it to labels 
+        labels = [self.convert_to_language_tokens(x) for x in output]
+        return labels
+
+
     def convert_to_language_tokens(self, x):
         """
         x looks like [time_shift, 1024, 11, 12, 129, 128]

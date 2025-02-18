@@ -13,7 +13,8 @@ from llama_recipes.datasets import (
     get_samsum_dataset,
     get_lakhmidi_dataset,
     get_merge_dataset,
-    get_emophia_con_gen_dataset
+    get_emophia_con_gen_dataset,
+    get_commu_con_gen_dataset
 )
 
 
@@ -59,7 +60,8 @@ DATASET_PREPROC = {
     "custom_dataset": get_custom_dataset,
     "lakhmidi_dataset": get_lakhmidi_dataset,
     "merge_dataset": get_merge_dataset,
-    "emophia_con_gen_dataset": get_emophia_con_gen_dataset
+    "emophia_con_gen_dataset": get_emophia_con_gen_dataset,
+    "commu_con_gen_dataset": get_commu_con_gen_dataset
 }
 
 
