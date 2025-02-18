@@ -166,6 +166,37 @@ class ConcatDataset_vanilla(Dataset):
     def __len__(self):
         return len(self.samples)
 
+class ConcatDataset_dummy_padding(Dataset): 
+    def __init__(self, dataset, chunk_size=4096, split = "train",data_dir = None):
+        self.dataset = dataset
+        self.chunk_size = chunk_size
+
+        self.samples = []
+        
+        sample_count = 0  # Initialize a counter for the samples
+        for sample in tqdm(self.dataset, desc="Preprocessing dataset", dynamic_ncols=True): 
+            length = len(sample['input_ids'])
+            #pad the input if it is less than chunk_size
+            if length<self.chunk_size:
+                pad_length = self.chunk_size - length
+                sample['input_ids'] = sample['input_ids'] + [[0, 0, 0, 0, 0, 0]]*pad_length 
+                sample['labels'] = sample['labels'] + [[0, 0, 0, 0, 0, 0, 0]]*pad_length
+                sample['attention_mask'] = [sample_count] * length + [sample_count*2] * pad_length
+                self.samples.append(sample)
+                sample_count+=1
+            elif length == self.chunk_size:
+                sample['attention_mask'] = [sample_count] * length
+                self.samples.append(sample)
+                sample_count+=1
+            else:
+                continue 
+
+    def __getitem__(self, idx):
+        return self.samples[idx]
+
+    def __len__(self):
+        return len(self.samples)
+
 class ConcatDataset_serial(Dataset):
     def __init__(self, dataset, chunk_size=4096):
         self.dataset = dataset
