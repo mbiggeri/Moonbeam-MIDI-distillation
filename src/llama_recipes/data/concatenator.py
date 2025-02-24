@@ -173,7 +173,7 @@ class ConcatDataset_dummy_padding(Dataset):
 
         self.samples = []
         
-        sample_count = 0  # Initialize a counter for the samples
+        sample_count = 1  # Initialize a counter for the samples
         for sample in tqdm(self.dataset, desc="Preprocessing dataset", dynamic_ncols=True): 
             length = len(sample['input_ids'])
             #pad the input if it is less than chunk_size
