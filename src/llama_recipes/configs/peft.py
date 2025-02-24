@@ -8,7 +8,7 @@ from typing import List
 class lora_config:
      r: int=8
      lora_alpha: int=32
-     target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj", "k_proj", "o_proj"])
+     target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj", "k_proj", "o_proj", "decoder_embedding", "summary_projection", "lm_head", "fc_out"])
      modules_to_save: List[str] = field(default_factory=lambda: ["supplementary_embedding_metadata"])
      bias= "none"
      task_type: str= "CAUSAL_LM"
