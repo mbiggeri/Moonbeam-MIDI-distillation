@@ -177,18 +177,16 @@ class MusicTokenizer():
         labels = [self.convert_to_language_tokens(x) for x in output]
         return labels
 
-    def encode_series_con_gen_commu(self, raw_token_series, raw_chord_series, metadata_tokens, if_only_keep_condition_tokens = False):
+    def encode_series_con_gen_commu(self, raw_token_series, raw_chord_series, metadata_tokens, if_only_keep_condition_tokens = False, if_add_chords = True):
         # meta_data_tokens,<SOC> chords, <EOC>, <SOS> music_seq, <EOS>     
         out = [self.encode_single(x) for x in raw_token_series]
-        out_chord = [self.encode_single(x) for x in raw_chord_series]
-        
-        out = [self.sos_token_compound] + out
+        if if_add_chords:
+            out_chord = [self.encode_single(x) for x in raw_chord_series]
+            out_chord = [self.soc_token_compound] + out_chord + [self.eoc_token_compound]
+        else:
+            out_chord = []
+        out = [self.sos_token_compound] + out + [self.eos_token_compound]
 
-        out = out + [self.eos_token_compound]
-    
-        out_chord = [self.soc_token_compound] + out_chord
-
-        out_chord = out_chord + [self.eoc_token_compound]
 
         if if_only_keep_condition_tokens: #Used during inference
             return metadata_tokens + out_chord + [self.sos_token_compound]
