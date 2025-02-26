@@ -894,6 +894,7 @@ class LlamaSdpaAttention(LlamaAttention):
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
         additional_token_map: Optional[Dict] = None,
+        additional_tokens_pos_map: Optional[Dict] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         if output_attentions:
             # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
@@ -933,11 +934,13 @@ class LlamaSdpaAttention(LlamaAttention):
         position_ids = position_ids_eos
 
         #Extend this to new tokens positions
-        if additional_token_map is not None:
+        if additional_token_map is not None and additional_tokens_pos_map is not None:
             for token_id in additional_token_map:
                 where_new_token = (position_ids[..., 0] == token_id).unsqueeze(-1)
-                position_ids = torch.where(where_new_token, torch.tensor([0 for _ in range(6)]).to(hidden_states.device), position_ids)
-
+                if str(token_id) in additional_tokens_pos_map:
+                    position_ids = torch.where(where_new_token, torch.tensor(additional_tokens_pos_map[str(token_id)]).to(hidden_states.device), position_ids)
+                else:
+                    position_ids = torch.where(where_new_token, torch.tensor([0 for _ in range(6)]).to(hidden_states.device), position_ids) #TODO: COMMU, add pos for min max vel, pitch
         cos_onset, sin_onset = self.rotary_emb_onset(value_states, position_ids[:, :, 0]) #position_ids: batch, len, 6; last dim: (onset, duration, octave, pitch_class, instrument, velocity)
         cos_dur, sin_dur = self.rotary_emb_dur(value_states, position_ids[:, :, 1]) 
         cos_octave, sin_octave = self.rotary_emb_octave(value_states, position_ids[:, :, 2]) 
@@ -1111,6 +1114,7 @@ class LlamaDecoderLayer(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         additional_token_map: Optional[Dict] = None,
+        additional_tokens_pos_map: Optional[Dict] = None,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -1139,7 +1143,8 @@ class LlamaDecoderLayer(nn.Module):
             output_attentions=output_attentions,
             use_cache=use_cache,
             cache_position=cache_position,
-            additional_token_map = additional_token_map
+            additional_token_map = additional_token_map, #TODO: COMMU, add pos for min max vel, pitch
+            additional_tokens_pos_map = additional_tokens_pos_map
         )
         hidden_states = residual + hidden_states
 
@@ -1456,6 +1461,7 @@ class LlamaModel(LlamaPreTrainedModel):
         self,
         input_ids: torch.LongTensor = None,
         additional_tokens_list: Optional[List[int]] = None,
+        additional_tokens_pos_map: Optional[Dict[str, List[int]]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
@@ -1539,7 +1545,8 @@ class LlamaModel(LlamaPreTrainedModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
-                    additional_token_map = additional_token_map
+                    additional_token_map = additional_token_map, #COMMU, add pos for min max vel, pitch
+                    additional_tokens_pos_map = additional_tokens_pos_map
                 )
 
             hidden_states = layer_outputs[0]
@@ -1944,7 +1951,10 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.model = LlamaModel(config)
-
+        self.sos_token = config.sos_token
+        self.eos_token = config.eos_token
+        self.soc_token = -4 
+        self.eoc_token = -5
         self.model.add_supplementary_embedding(num_tokens = len(config.metadata_tokens), embedding_name = "supplementary_embedding_metadata", hidden_size = config.hidden_size) #commu_specific, add soc, eoc and metadata tokens
 
         output_decoder_config= {k: v for k, v in config.decoder.items()}
@@ -1958,7 +1968,7 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
         self.summary_projection = nn.Linear(config.hidden_size, config.decoder["hidden_size"], bias=False) 
         #TODO: add projection layer to shrink the size! nn.Embedding(config.decoder.hidden_size, config.decode_vocab_size)
         self.lm_head = nn.Linear(config.decoder["hidden_size"], config.decode_vocab_size, bias=False) 
-
+        self.gru_condition_layer = nn.Linear(11*config.hidden_size, decoder_config.hidden_size, bias=False) 
 
         # # Initialize weights array with ones
         # weights = torch.ones(self.config.decode_vocab_size)
@@ -2001,6 +2011,7 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
         self,
         input_ids: Optional[torch.LongTensor] = None, # need to be provided during training/evaluation
         input_ids_encoded: Optional[torch.Tensor] = None, # need to be provided during inference
+        metadata_tokens: Optional[torch.Tensor] = None, # need to be provided during inference
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
@@ -2048,6 +2059,64 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
 
         #outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         if input_ids is not None and decoded_hidden_state is None: #training/evaluation
+            import random
+            #with 10% probablity remove <metadata> tokens
+            # print("chords not dropped!", input_ids.shape, attention_mask.shape, labels.shape)
+
+            #with 10% probablity remove chord tokens:  for each data in one batch, 1. find indices between <soc> and <eoc>, record the length: L , between <sos> and <eos>, 2. stitch the <metadata> tokens, tokens between <sos> and <eos>, and add the length L to the end of the sequence, 3. concat all data in this batch
+            """            if random.random() < 0.2 and self.training:
+                print("chords dropped!")
+                input_ids_no_chord = []
+                input_attention_mask_no_chord = []
+                labels_no_chord = []
+
+                def stitch_input(input_ids,seq_indices_sos, seq_indices_eos, seq_indices_soc, seq_indices_eoc):
+
+                    #1. find indices between <soc> and <eoc>, record the length: L , between <sos> and <eos>, 2. stitch the <metadata> tokens, tokens between <sos> and <eos>, and add the length L to the end of the sequence, 3. concat all data in this batch
+                    input_id_metadata = input_ids[:seq_indices_soc]
+
+                    chord_length = len(input_ids[seq_indices_soc:seq_indices_eoc+1])
+
+                    input_id_music= input_ids[seq_indices_sos:seq_indices_eos+1]
+                    input_id_pad = input_ids[seq_indices_eos+1: ]
+                    # print(f"input_id_metadata:{input_id_metadata}, input_id_music:{input_id_music}, input_id_pad:{input_id_pad}")
+                    # Extract the first element and repeat it
+
+                    first_element_pad = input_id_pad[0].unsqueeze(0) # Shape (1, dim) or (1, )
+                    # print(f"first_element_pad:{first_element_pad}")
+                    if input_ids.dim() == 2:
+                        # print(f"input_ids.dim() == 2")
+                        first_element_pad_extended = first_element_pad.repeat(chord_length, 1) #(len, dim)
+                    elif input_ids.dim() == 1:
+                        # print(f"input_ids.dim() == 1")
+                        first_element_pad_extended = first_element_pad.repeat(chord_length)  #(len,)
+                    input_id_pad_extended = torch.cat([first_element_pad_extended, input_id_pad], dim = 0)
+                    # print(f"first_element_pad_extended:{first_element_pad_extended}, input_id_pad_extended:{input_id_pad_extended}")
+
+
+                    input_id_metadata_music_pad = torch.cat([input_id_metadata, input_id_music, input_id_pad_extended], dim = 0)
+
+                    return input_id_metadata_music_pad
+
+                for batch_idx in range(len(input_ids)):
+                    # Find the indices of the `sos` and `eos` tokens in the current sequence
+                    seq_indices_sos = (input_ids[batch_idx, :, 0] == self.sos_token).nonzero(as_tuple=True)[0].item()
+                    seq_indices_eos = (input_ids[batch_idx, :,0] == self.eos_token).nonzero(as_tuple=True)[0].item()
+                    seq_indices_soc = (input_ids[batch_idx, :, 0] == self.soc_token).nonzero(as_tuple=True)[0].item()
+                    seq_indices_eoc = (input_ids[batch_idx, :, 0] == self.eoc_token).nonzero(as_tuple=True)[0].item()
+
+                    i = stitch_input(input_ids[batch_idx], seq_indices_sos, seq_indices_eos, seq_indices_soc, seq_indices_eoc)
+                    m = stitch_input(attention_mask[batch_idx], seq_indices_sos, seq_indices_eos, seq_indices_soc, seq_indices_eoc)
+                    l = stitch_input(labels[batch_idx], seq_indices_sos, seq_indices_eos, seq_indices_soc, seq_indices_eoc)
+
+                    input_ids_no_chord.append(i)
+                    input_attention_mask_no_chord.append(m)
+                    labels_no_chord.append(l)
+                # print("chords dropped!", input_ids.shape, attention_mask.shape, labels.shape)
+                input_ids = torch.stack(input_ids_no_chord, dim = 0)
+                attention_mask = torch.stack(input_attention_mask_no_chord, dim = 0)
+                labels = torch.stack(labels_no_chord, dim = 0)
+                """
             if self.attn_implementation == "sdpa":
                 position_ids = input_ids
             elif self.attn_implementation == "sdpa_baseline":
@@ -2063,7 +2132,8 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
                 cache_position=cache_position,
-                additional_tokens_list=self.config.metadata_tokens
+                additional_tokens_list=self.config.metadata_tokens,
+                additional_tokens_pos_map=self.config.metadata_tokens_pos
             )
             hidden_states = outputs[0]
             logits = hidden_states
@@ -2078,6 +2148,7 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
         loss = None
         generation_logits = None
         generation_hidden_state = None
+        additional_token_map = {token_id: i for i, token_id in enumerate(self.config.metadata_tokens)}
         if labels is not None: #if label exists: during training/evaluation --> teacher forcing, return loss;
             shift_logits_x = logits_shrinked[..., :-1, :].contiguous() #batch, len_x-1, dim
             shift_labels_x = labels[..., 1:, :].contiguous().to(logits_shrinked.device)
@@ -2087,6 +2158,7 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
             
             logits_list = []
             labels_list = []
+            condition_list = []
 
             for batch_idx in range(batch_size):
                 # Find the indices of the `sos` and `eos` tokens in the current sequence
@@ -2096,12 +2168,16 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
                 # Gather logits between `sos` and `eos` tokens (exclusive of `sos` and `eos` themselves)
                 logits_between_sos_eos = shift_logits_x[batch_idx, seq_indices_sos : seq_indices_eos]
                 labels_between_sos_eos = shift_labels_x[batch_idx, seq_indices_sos : seq_indices_eos]
+                
+                metadata_condition = self.model.supplementary_embedding_metadata(torch.tensor([additional_token_map[token.item()] for token in input_ids[batch_idx, :11, 0]]).to(input_ids)).reshape(-1).unsqueeze(0).expand(seq_indices_eos - seq_indices_sos, -1).to(shift_logits_x) #11, dim --> 11*dim --> (1, 11*dim), (len, 11*dim)
+                metadata_condition_shrinked = self.gru_condition_layer(metadata_condition) #(len, 11*dim) --> (len, dim)
+                # print(f"metadata_condition:{metadata_condition.shape}, metadata_condition_shrinked:{metadata_condition_shrinked.shape}")
                 logits_list.append(logits_between_sos_eos)
                 labels_list.append(labels_between_sos_eos)
-
-            shift_logits_x = torch.cat(logits_list, dim = 0) #..., dim
-            shift_labels_x = torch.cat(labels_list, dim = 0) #..., onset_vocab_size + dur_size + .. + vel_size
-
+                condition_list.append(metadata_condition_shrinked)
+            shift_logits_x = torch.cat(logits_list, dim = 0) #len_concat, dim
+            shift_labels_x = torch.cat(labels_list, dim = 0) #len_concat, onset_vocab_size + dur_size + .. + vel_size
+            condition_metadata = torch.cat(condition_list, dim = 0) #(len_concat, dim)
             if self.decoder_attn_implementation == "output": #DANGEROURS: here shift labels does not contain SOS_decoding token 
                 # 1. get the "SOS" token for each decoding step
                 music_summary = shift_logits_x.view(-1, shift_logits_x.shape[-1]).unsqueeze(1) #batch*(len_x-1), 1, dim 
@@ -2139,7 +2215,7 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
                 shift_labels_x_y = shift_labels_x_flattened[:, 1:].contiguous() #batch*(len_x-1), len_y-1(1:)
                 
                 shift_labels_x_y_encoded = self.decoder_embedding(shift_labels_x_flattened[:, :-1]) #batch*(len_x-1), len_y-1(:-1), dim
-                generation_logits, generation_hidden_state = self.decoder(shift_labels_x_y_encoded, shift_logits_x_flattened.unsqueeze(0).expand(self.decoder.num_hidden_layers, -1, -1)) #batch*(len_x-1), len_y-1, decode_vocab_size
+                generation_logits, generation_hidden_state = self.decoder(shift_labels_x_y_encoded + condition_metadata.unsqueeze(1), shift_logits_x_flattened.unsqueeze(0).expand(self.decoder.num_hidden_layers, -1, -1)) #batch*(len_x-1), len_y-1, decode_vocab_size
 
                 generation_logits = [generation_logits]
 
@@ -2152,7 +2228,16 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
         elif decoded_language_tokens is not None and decoded_hidden_state is not None: #else during inference (decoding)--> inference autoregressively, return generated tokens
             if self.decoder_attn_implementation == "GRU":              
                 decoded_language_tokens_encoded = self.decoder_embedding(decoded_language_tokens)##batch*len_x, len_y--> batch*lenx, len_y, dim
-                generation_logits_flattened, generation_hidden_state_flattened = self.decoder(decoded_language_tokens_encoded, decoded_hidden_state) #output: batch*len_x, len_y, dim ,  hidden state: num_layers, batch*len_x, dim
+
+                metadata_condition = self.model.supplementary_embedding_metadata(
+                    torch.tensor([
+                        additional_token_map[token.item()] 
+                        for batch in metadata_tokens # Iterate through the first 11 tokens in each batch
+                        for token in batch                  # Iterate through each token in the batch
+                    ])
+                ).reshape(metadata_tokens.shape[0] , -1).unsqueeze(1)  # Reshape and move to the same device as input_ids #batch, 11 --> batch, 11, dim --> batch, 11*dim, --> batch, 1, 11*dim
+                metadata_condition_shrinked = self.gru_condition_layer(metadata_condition) #(batch, 1, 11*dim) --> (batch, 1, dim)
+                generation_logits_flattened, generation_hidden_state_flattened = self.decoder(decoded_language_tokens_encoded+metadata_condition_shrinked, decoded_hidden_state) #output: batch*len_x, len_y, dim ,  hidden state: num_layers, batch*len_x, dim
                 
                 generation_logits = generation_logits_flattened.view(decoded_language_tokens_encoded.shape[0],decoded_language_tokens_encoded.shape[1], -1) #batch*len_x, len_y, decode_vocab_size
                 generation_hidden_state = generation_hidden_state_flattened.view(self.decoder.num_hidden_layers, decoded_language_tokens_encoded.shape[0], -1) #num_layers, batch*len_x, dim
