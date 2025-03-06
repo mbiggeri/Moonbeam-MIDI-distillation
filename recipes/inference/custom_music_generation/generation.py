@@ -6,7 +6,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple, TypedDict
+from typing import List, Optional, Tuple, TypedDict, Dict
 from accelerate.utils import is_xpu_available
 import time
 from transformers import (
@@ -25,8 +25,8 @@ from fairscale.nn.model_parallel.initialize import (
     model_parallel_is_initialized,
 )
 
-from llama.model import ModelArgs, Transformer
-from llama.tokenizer import ChatFormat, Dialog, Message, Tokenizer
+# from llama.model import ModelArgs, Transformer
+# from llama.tokenizer import ChatFormat, Dialog, Message, Tokenizer
 
 
 class CompletionPrediction(TypedDict, total=False):
@@ -35,89 +35,84 @@ class CompletionPrediction(TypedDict, total=False):
     logprobs: List[float]  # not required
 
 
-class ChatPrediction(TypedDict, total=False):
-    generation: Message
-    tokens: List[str]  # not required
-    logprobs: List[float]  # not required
-
 
 class MusicLlama:
-    @staticmethod
-    def build_original(
-        ckpt_dir: str,
-        tokenizer_path: str,
-        max_seq_len: int,
-        max_batch_size: int,
-        model_parallel_size: Optional[int] = None,
-        seed: int = 1,
-    ) -> "Llama":
-        """
-        Build a Llama instance by initializing and loading a model checkpoint.
+    # @staticmethod
+    # def build_original(
+    #     ckpt_dir: str,
+    #     tokenizer_path: str,
+    #     max_seq_len: int,
+    #     max_batch_size: int,
+    #     model_parallel_size: Optional[int] = None,
+    #     seed: int = 1,
+    # ) -> "Llama":
+    #     """
+    #     Build a Llama instance by initializing and loading a model checkpoint.
 
-        Args:
-            ckpt_dir (str): Path to the directory containing checkpoint files.
-            tokenizer_path (str): Path to the tokenizer file.
-            max_seq_len (int): Maximum sequence length for input text.
-            max_batch_size (int): Maximum batch size for inference.
-            model_parallel_size (Optional[int], optional): Number of model parallel processes.
-                If not provided, it's determined from the environment. Defaults to None.
+    #     Args:
+    #         ckpt_dir (str): Path to the directory containing checkpoint files.
+    #         tokenizer_path (str): Path to the tokenizer file.
+    #         max_seq_len (int): Maximum sequence length for input text.
+    #         max_batch_size (int): Maximum batch size for inference.
+    #         model_parallel_size (Optional[int], optional): Number of model parallel processes.
+    #             If not provided, it's determined from the environment. Defaults to None.
 
-        Returns:
-            Llama: An instance of the Llama class with the loaded model and tokenizer.
+    #     Returns:
+    #         Llama: An instance of the Llama class with the loaded model and tokenizer.
 
-        Raises:
-            AssertionError: If there are no checkpoint files in the specified directory,
-                or if the model parallel size does not match the number of checkpoint files.
+    #     Raises:
+    #         AssertionError: If there are no checkpoint files in the specified directory,
+    #             or if the model parallel size does not match the number of checkpoint files.
 
-        Note:
-            This method initializes the distributed process group, sets the device to CUDA,
-            and loads the pre-trained model and tokenizer.
-        """
-        if not torch.distributed.is_initialized():
-            torch.distributed.init_process_group("nccl")
-        if not model_parallel_is_initialized():
-            if model_parallel_size is None:
-                model_parallel_size = int(os.environ.get("WORLD_SIZE", 1))
-            initialize_model_parallel(model_parallel_size)
+    #     Note:
+    #         This method initializes the distributed process group, sets the device to CUDA,
+    #         and loads the pre-trained model and tokenizer.
+    #     """
+    #     if not torch.distributed.is_initialized():
+    #         torch.distributed.init_process_group("nccl")
+    #     if not model_parallel_is_initialized():
+    #         if model_parallel_size is None:
+    #             model_parallel_size = int(os.environ.get("WORLD_SIZE", 1))
+    #         initialize_model_parallel(model_parallel_size)
 
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
-        torch.cuda.set_device(local_rank)
+    #     local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    #     torch.cuda.set_device(local_rank)
 
-        # seed must be the same in all processes
-        torch.manual_seed(seed)
+    #     # seed must be the same in all processes
+    #     torch.manual_seed(seed)
 
-        if local_rank > 0:
-            sys.stdout = open(os.devnull, "w")
+    #     if local_rank > 0:
+    #         sys.stdout = open(os.devnull, "w")
 
-        start_time = time.time()
-        checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
-        assert len(checkpoints) > 0, f"no checkpoint files found in {ckpt_dir}"
-        assert model_parallel_size == len(
-            checkpoints
-        ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {model_parallel_size}"
-        ckpt_path = checkpoints[get_model_parallel_rank()]
-        checkpoint = torch.load(ckpt_path, map_location="cpu")
-        with open(Path(ckpt_dir) / "params.json", "r") as f:
-            params = json.loads(f.read())
+    #     start_time = time.time()
+    #     checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
+    #     assert len(checkpoints) > 0, f"no checkpoint files found in {ckpt_dir}"
+    #     assert model_parallel_size == len(
+    #         checkpoints
+    #     ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {model_parallel_size}"
+    #     ckpt_path = checkpoints[get_model_parallel_rank()]
+    #     checkpoint = torch.load(ckpt_path, map_location="cpu")
+    #     with open(Path(ckpt_dir) / "params.json", "r") as f:
+    #         params = json.loads(f.read())
 
-        model_args: ModelArgs = ModelArgs(
-            max_seq_len=max_seq_len,
-            max_batch_size=max_batch_size,
-            **params,
-        )
-        print("night safari model_args", model_args)
+    #     model_args: ModelArgs = ModelArgs(
+    #         max_seq_len=max_seq_len,
+    #         max_batch_size=max_batch_size,
+    #         **params,
+    #     )
+    #     print("night safari model_args", model_args)
 
-        tokenizer = Tokenizer(model_path=tokenizer_path)
-        assert model_args.vocab_size == tokenizer.n_words
-        if torch.cuda.is_bf16_supported():
-            torch.set_default_tensor_type(torch.cuda.BFloat16Tensor)
-        else:
-            torch.set_default_tensor_type(torch.cuda.HalfTensor)
-        model = Transformer(model_args)
-        model.load_state_dict(checkpoint, strict=False)
-        print(f"Loaded in {time.time() - start_time:.2f} seconds")
+    #     tokenizer = Tokenizer(model_path=tokenizer_path)
+    #     assert model_args.vocab_size == tokenizer.n_words
+    #     if torch.cuda.is_bf16_supported():
+    #         torch.set_default_tensor_type(torch.cuda.BFloat16Tensor)
+    #     else:
+    #         torch.set_default_tensor_type(torch.cuda.HalfTensor)
+    #     model = Transformer(model_args)
+    #     model.load_state_dict(checkpoint, strict=False)
+    #     print(f"Loaded in {time.time() - start_time:.2f} seconds")
 
-        return Llama(model, tokenizer)
+    #     return Llama(model, tokenizer)
     
     @staticmethod
     def build(
@@ -193,7 +188,7 @@ class MusicLlama:
         return MusicLlama(model, tokenizer, llama_config)
 
     @staticmethod
-    def build_emo_con_gen(
+    def build_commu_con_gen(
         ckpt_dir: str,
         model_config_path: str,
         tokenizer_path: str,
@@ -202,6 +197,7 @@ class MusicLlama:
         model_parallel_size: Optional[int] = None,
         seed: int = 1,
         finetuned_PEFT_weight_path: Optional[str] = None,
+        additional_token_dict: Optional[Dict] = None,
     ) -> "MusicLlama":
         """
         Build a Llama instance by initializing and loading a model checkpoint.
@@ -237,7 +233,7 @@ class MusicLlama:
         model = LlamaForCausalLM_Conditional_Generation(llama_config) 
         start_time = time.time()
 
-        #TODO: if peft model then load differently
+        #if peft model then load differently
         checkpoint = torch.load(ckpt_dir)
         checkpoint = checkpoint['model_state_dict']
         new_state_dict = {}
@@ -262,11 +258,13 @@ class MusicLlama:
         model.eval()
 
         tokenizer = MusicTokenizer(timeshift_vocab_size = llama_config.onset_vocab_size, dur_vocab_size = llama_config.dur_vocab_size, octave_vocab_size = llama_config.octave_vocab_size, pitch_class_vocab_size = llama_config.pitch_class_vocab_size, instrument_vocab_size = llama_config.instrument_vocab_size, velocity_vocab_size = llama_config.velocity_vocab_size)
-        if hasattr(llama_config, "emotion_token_pos_map"):
-            tokenizer.add_new_tokens(token_name = "emotion_token_4Q1", token_val = llama_config.emotion_token_4Q1)
-            tokenizer.add_new_tokens(token_name = "emotion_token_4Q2", token_val = llama_config.emotion_token_4Q2)
-            tokenizer.add_new_tokens(token_name = "emotion_token_4Q3", token_val = llama_config.emotion_token_4Q3)
-            tokenizer.add_new_tokens(token_name = "emotion_token_4Q4", token_val = llama_config.emotion_token_4Q4)
+    
+
+        for key, value in additional_token_dict.items():
+            tokenizer.add_new_tokens(token_name = key, token_val = value)
+            print(f"added {key} to tokenizer")
+        
+        
         if torch.cuda.is_bf16_supported():
             torch.set_default_tensor_type(torch.cuda.BFloat16Tensor)
             model = model.to(torch.bfloat16)  # Explicitly cast the entire model to BF16 precision. TODO: whether or not cast in bf16
@@ -292,7 +290,9 @@ class MusicLlama:
         top_p: float = 0.9,
         logprobs: bool = False,
         echo: bool = False,
-        condition_token_length: int = 1,
+        metadata_condition: List = None, 
+        chord_condition: List = None,
+        condition_token_lengths: List[int] = None,
     ) -> Tuple[List[List[int]], Optional[List[List[float]]]]:
         """
         Generate text sequences based on provided prompts using the language generation model.
@@ -315,7 +315,8 @@ class MusicLlama:
         """
 
         bsz = len(prompt_tokens)
-
+        if metadata_condition is not None:
+            metadata_tokens = torch.tensor(metadata_condition)
         min_prompt_len = min(len(t) for t in prompt_tokens)
         max_prompt_len = max(len(t) for t in prompt_tokens)
         assert max_prompt_len <= self.config.max_len 
@@ -338,19 +339,20 @@ class MusicLlama:
         past_key_values = None
         for cur_pos in range(min_prompt_len, total_len): #recursively generate new tokens in parallel
             print(f"{cur_pos}/{total_len} generated")
+            print(f"prev_pos:{prev_pos}, cur_pos:{cur_pos}")
             output = self.model.forward(input_ids = tokens[:, prev_pos:cur_pos], past_key_values = past_key_values, use_cache = True, attention_mask = None) #output logtis: (batch, len, dim 
             #KV cache 
-            # print("artificial check!")
-            # output2 = self.model.forward(input_ids = tokens[:, 0:cur_pos], attention_mask = torch.zeros(tokens.shape[0], cur_pos-0) , past_key_values = None, use_cache = None) #output logtis: (batch, len, dim
-            # print(f"{output.logits[:, -1, :]=} {output2.logits[:, -1, :]=}")
-
             next_decoder_token = torch.tensor(self.tokenizer.sos_out).to(tokens).expand(tokens.shape[0]*(cur_pos - prev_pos), 1) #batch*len_x, len_y = 1
             next_decoder_token_out = next_decoder_token
-            hidden_state = output.logits  #first forward pass: batch, len_x, dim --> batch*len_x, dim  --> num_layer, batch*len_x, dim; 
-            hidden_state = hidden_state.view(hidden_state.shape[0]*hidden_state.shape[1], hidden_state.shape[2]).unsqueeze(0).expand(self.model.decoder.num_hidden_layers, -1, -1).contiguous() #batch, len_x, dim --> num_layer, batch*len_x, dim; 
-
+            hidden_state = output.logits  #first forward pass: batch, len_x, dim --> batch*len_x, dim  --> num_layer, batch*len_x, dim;     
+            hidden_state = hidden_state.view(hidden_state.shape[0]*hidden_state.shape[1], hidden_state.shape[2]).unsqueeze(0).expand(self.model.decoder.num_hidden_layers, -1, -1).contiguous() #batch, len_x, dim --> num_layer, batch*len_x, dim;
+            
+            if metadata_condition is not None:
+                metadata_tokens_expanded = metadata_tokens.to(tokens).unsqueeze(1).expand(-1, cur_pos - prev_pos, -1).reshape(tokens.shape[0]*(cur_pos - prev_pos), -1) #batch, 11 --> batch, 1, 11 --> batch*cur_pos - prev_pos, 11
+            else:
+                metadata_tokens_expanded = None
             for attribute in ["timeshift_dict_decode", "duration_dict_decode", "octave_dict_decode", "pitch_dict_decode", "instrument_dict_decode", "velocity_dict_decode"]:
-                output_decoder = self.model.forward(decoded_hidden_state = hidden_state, decoded_language_tokens = next_decoder_token, attention_mask = None) #here attention mask?
+                output_decoder = self.model.forward(decoded_hidden_state = hidden_state, decoded_language_tokens = next_decoder_token, attention_mask = None, metadata_condition = metadata_tokens_expanded)
                 generation_logits = output_decoder.generation_logits ##batch*len_x, len_y, decode_vocab_size
                 hidden_state = output_decoder.generation_hidden_state ##num_layers, batch*len_x, dim
 
@@ -364,8 +366,9 @@ class MusicLlama:
                         start_time = time.time()
                         while next_decoder_token[i, 0].item() not in sample_indices_set:  # Check if token is valid
                             next_decoder_token[i, 0] = sample_top_p(probs, top_p)[i, 0]  # Resample and replace in-place
-                            if time.time() - start_time > 5:  # If the loop runs for more than 5 seconds, print a warning
-                                print(f"Warning: Resampling for token {i} has taken longer than 5 seconds.")
+                            if time.time() - start_time > 15:  # If the loop runs for more than 5 seconds, print a warning
+                                print(f"Warning: Resampling for token {i} has taken longer than 15 seconds.")
+                                break
                 else:
                     probs = torch.softmax(generation_logits[:, -1, :], dim=-1)  #batch*len_x, len_y (last), decode_vocab_size
                     # next_decoder_token_greedy = probs.argmax(dim=-1, keepdim=True) #batch*len_x, 1
@@ -387,8 +390,11 @@ class MusicLlama:
             #remove the sos_out token 
             next_decoder_token_out_reshaped = next_decoder_token_out[:, 1:].view(tokens.shape[0], -1 ,6) #batch*len_x, 6 --> batch, len_x, 6
             next_decoder_token_lang = self.tokenizer.convert_from_language_tokens(next_decoder_token_out_reshaped) #batch, lenx, 6 
-            
+            # print(f"next_decoder_token_out_reshaped:{next_decoder_token_out_reshaped}")
             previous_onset = tokens[:, cur_pos-1, 0] #batch, 
+            if any(previous_onset < 0):
+                #if any value in previous_onset is smaller than 0, replace it with zero
+                previous_onset = torch.where(previous_onset < 0, torch.zeros_like(previous_onset), previous_onset)
             new_onset = previous_onset + next_decoder_token_lang.clone().detach()[:, -1, 0].to(previous_onset) #batch, + batch --> batch
             next_decoder_token_onset = torch.cat ([new_onset.unsqueeze(-1) ,next_decoder_token_lang.clone().detach()[:, -1, 1:]],dim=-1).to(tokens) #batch, 1  cat  batch, 5
             next_token = torch.where(
@@ -410,10 +416,15 @@ class MusicLlama:
             eos_reached |= (~input_mask[:, cur_pos].squeeze(-1)) & eos_conditions   
             prev_pos = cur_pos
             past_key_values = output.past_key_values
+            if any(eos_reached): #wait until all sequences reach eos
+                eos_count = eos_reached.sum().item()  # Number of sequences with EOS
+                total_count = len(eos_reached)        # Total number of sequences
+                print(f"{eos_count}/{total_count} sequences have reached EOS.")
+
             if all(eos_reached): #wait until all sequences reach eos
                 print("eos reached!")
                 break 
-        tokens = tokens[:, condition_token_length:, :] #remove SOS token
+        # tokens = tokens[:, condition_token_length:, :] #remove SOS token
 
          #TODO: in the future, return logprob
         out_tokens, out_logprobs = [], []
@@ -436,17 +447,26 @@ class MusicLlama:
                     pass
             out_tokens.append(toks)
             out_logprobs.append(probs)
-        return (out_tokens, out_logprobs if logprobs else None)
+        out_tokens_no_cond_tokens = []
+        out_logprobs_no_cond_tokens = []
+        for i, condition_token_length in enumerate(condition_token_lengths):
+            out_tokens_no_cond_tokens.append(out_tokens[i][condition_token_length:])
+
+        print(f"after cutting condition tokens: {out_tokens_no_cond_tokens}")
+        return (out_tokens_no_cond_tokens, out_logprobs_no_cond_tokens if logprobs else None)
 
     def music_completion(
         self,
         prompt_tokens: List[List[List[int]]],
+        metadata_condition: List = None, 
+        chord_condition: List = None,
         temperature: float = 0.6,
         top_p: float = 0.9,
         max_gen_len: Optional[int] = None,
         logprobs: bool = False,
-        condition_token_length: int = 1,
-    ) -> List[ChatPrediction]:
+        condition_token_lengths: List[int] = None,
+        chord_token_indices: List[List[int]] = None,
+    ):
         """
         Generate assistant responses for a list of conversational dialogs using the language generation model.
 
@@ -474,13 +494,19 @@ class MusicLlama:
         # ]
         generation_tokens, generation_logprobs = self.generate(
             prompt_tokens=prompt_tokens,
+            metadata_condition=metadata_condition, 
+            chord_condition = chord_condition,
             max_gen_len=max_gen_len,
             temperature=temperature,
             top_p=top_p,
             logprobs=logprobs,
             echo = True,
-            condition_token_length = condition_token_length
+            condition_token_lengths = condition_token_lengths
         )
+        if chord_token_indices is not None:
+            chord_tokens = [prompt_tokens[i][chord_token_indices[i][0]+1:chord_token_indices[i][1]] for i in range(len(prompt_tokens))]
+        else:
+            chord_tokens = [generation_tokens[0] for _ in range(len(prompt_tokens))] #dummy output
         #Post processing: if the generated tokens have more than 15 channels, split the generation tokens into multiple parts of at most 15 channels 
         generation_tokens_post_proc = []
         for t in generation_tokens: #check if generated midi has more than 16 channels (instruments)
@@ -506,10 +532,12 @@ class MusicLlama:
                 "generation": {
                     "role": "assistant",
                     "content": self.tokenizer.compound_to_midi_multi(t), #a list of midi objects each contains at most 15 instruments
+                    "chord": self.tokenizer.compound_to_midi_multi([chord]),
                     "tokens": t,
+                    "chord_tokens": [chord],
                 },
             }
-            for t in generation_tokens_post_proc #t is a list of tensors with shape (len, 6)
+            for chord,t in zip(chord_tokens, generation_tokens_post_proc) #t is a list of tensors with shape (len, 6)
         ]
     @staticmethod
     def postprocess_split(tokens):
