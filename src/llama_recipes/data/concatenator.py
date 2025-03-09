@@ -179,8 +179,10 @@ class ConcatDataset_dummy_padding(Dataset):
             #pad the input if it is less than chunk_size
             if length<self.chunk_size:
                 pad_length = self.chunk_size - length
+                pad_length_bar_beat_chord = self.chunk_size - len(sample['bar_beat_chord_condition'])
                 sample['input_ids'] = sample['input_ids'] + [[0, 0, 0, 0, 0, 0]]*pad_length 
                 sample['labels'] = sample['labels'] + [[0, 0, 0, 0, 0, 0, 0]]*pad_length
+                sample['bar_beat_chord_condition'] = sample['bar_beat_chord_condition'] + [[0, 0, 0]]*pad_length_bar_beat_chord
                 sample['attention_mask'] = [sample_count] * length + [sample_count*2] * pad_length
                 self.samples.append(sample)
                 sample_count+=1
