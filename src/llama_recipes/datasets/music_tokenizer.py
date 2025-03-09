@@ -177,14 +177,20 @@ class MusicTokenizer():
         labels = [self.convert_to_language_tokens(x) for x in output]
         return labels
 
-    def encode_series_con_gen_commu(self, raw_token_series, raw_chord_series, metadata_tokens, if_only_keep_condition_tokens = False, if_add_chords = True):
+    def encode_series_con_gen_commu(self, raw_token_series, raw_chord_series, metadata_tokens, if_only_keep_condition_tokens = False, if_add_chords_in_transformer = True, if_add_metadata_in_transformer = False):
         # meta_data_tokens,<SOC> chords, <EOC>, <SOS> music_seq, <EOS>     
         out = [self.encode_single(x) for x in raw_token_series]
-        if if_add_chords:
+        if if_add_chords_in_transformer:
             out_chord = [self.encode_single(x) for x in raw_chord_series]
             out_chord = [self.soc_token_compound] + out_chord + [self.eoc_token_compound]
         else:
             out_chord = []
+
+        if if_add_metadata_in_transformer:
+            metadata_tokens = metadata_tokens
+        else:
+            metadata_tokens = []
+            
         out = [self.sos_token_compound] + out + [self.eos_token_compound]
 
 
@@ -328,7 +334,7 @@ class MusicTokenizer():
         return binary
 
     @staticmethod
-    def midi_to_compound(midifile,TIME_RESOLUTION=100, debug=False):
+    def midi_to_compound(midifile,TIME_RESOLUTION=100, debug=False, calibate_to_default_tempo = False):
 
         """
         modified from: https://github.com/jthickstun/anticipation/blob/main/anticipation/convert.py#L128 
@@ -362,7 +368,10 @@ class MusicTokenizer():
                 instr = 128 if message.channel == 9 else instruments[message.channel] #if drum--> instru = 128; else instrument in the program change message
                 if message.type == 'note_on' and message.velocity > 0: # onset
                     # time quantization --> convert to binary
-                    time_in_ticks = round(TIME_RESOLUTION*time)
+                    if calibate_to_default_tempo:
+                        time_in_ticks = round(TIME_RESOLUTION*time * 500000/tempo)
+                    else:
+                        time_in_ticks = round(TIME_RESOLUTION*time)
                     # time_in_ticks_binary = decimal_to_binary(time_in_ticks, bits = onset_bits)
                     # pitch--> octave, pitch_class
                     octave, pitch_class = pitch_to_octave_pitch_class(message.note)
@@ -378,13 +387,17 @@ class MusicTokenizer():
                         if debug:
                             print('WARNING: ignoring bad offset') #note with offset but without onset
                     else:
-                        duration_ticks = round(TIME_RESOLUTION*(time-onset_time))
+                        if calibate_to_default_tempo:
+                            duration_ticks = round(TIME_RESOLUTION* 500000/tempo*(time-onset_time))
+                        else:
+                            duration_ticks = round(TIME_RESOLUTION*(time-onset_time))
                         if duration_ticks==0: #happens in 20% of the file, note duration is zero, replace these with the smallest duration allowed: 10ms
                             duration_ticks = 1
                         tokens[open_idx][1] = duration_ticks
                         #del open_notes[(instr,message.note,message.channel)]
             elif message.type == 'set_tempo':
                 tempo = message.tempo
+                if tempo!=500000:
             elif message.type == 'time_signature':
                 pass # we use real time
             elif message.type in ['aftertouch', 'polytouch', 'pitchwheel', 'sequencer_specific']:
