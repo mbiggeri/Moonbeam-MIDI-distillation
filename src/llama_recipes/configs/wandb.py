@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class wandb_config:
-    project: str = 'Conditional_Generation' # wandb project name
+    project: str = 'Conditional_Generation_Calibrated_Onsets_Dur' # wandb project name
     entity: Optional[str] = None # wandb entity name
     job_type: Optional[str] = None
     tags: Optional[List[str]] = None
