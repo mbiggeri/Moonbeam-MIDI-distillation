@@ -243,7 +243,7 @@ def main(**kwargs):
                     mixed_precision=mixed_precision_policy if not ddp_config.pure_bf16 else None, 
                     device_mesh=hsdp_device_mesh,
                     device_ids=[local_rank],
-                    find_unused_parameters=False,
+                    find_unused_parameters=True,
                     )
     elif not train_config.quantization and not train_config.enable_fsdp:
         if is_xpu_available():
@@ -322,7 +322,15 @@ def main(**kwargs):
 
     
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
-
+    print("check model trainable parameters")
+    total_trainable = 0
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"Trainable: {name} | Shape: {param.shape} | Parameters: {param.numel()}")
+            total_trainable += param.numel()
+        else:
+            print(f"Frozen: {name} | Shape: {param.shape} | Parameters: {param.numel()}")
+    print(f"\nTotal Trainable Parameters: {total_trainable}")
     # Start the training process
     results = train_con_gen( #TODO: commu specific, modify this function
         model,
