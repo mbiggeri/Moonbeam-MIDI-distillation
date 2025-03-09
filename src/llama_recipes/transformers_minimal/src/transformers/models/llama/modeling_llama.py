@@ -54,7 +54,8 @@ if is_flash_attn_2_available():
     from flash_attn import flash_attn_func, flash_attn_varlen_func
     from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input  # noqa
 
-
+from music21 import chord
+from music21 import harmony
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "LlamaConfig"
@@ -70,7 +71,14 @@ def _get_unpad_data(attention_mask):
         cu_seqlens,
         max_seqlen_in_batch,
     )
-
+def chord_to_midi(chord_symbol):
+    # Create a ChordSymbol object
+    chord_obj = harmony.ChordSymbol(chord_symbol)
+    # Get the pitches of the chord
+    pitches = chord_obj.pitches
+    # Return the pitch names
+    out = [p.midi  for p in pitches]
+    return out
 
 class LlamaRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
@@ -1958,6 +1966,10 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
         self.model.add_supplementary_embedding(num_tokens = len(config.metadata_tokens), embedding_name = "supplementary_embedding_metadata", hidden_size = config.hidden_size) #commu_specific, add soc, eoc and metadata tokens
         self.if_add_metadata_in_decoder = config.if_add_metadata_in_decoder
         self.if_add_chord_in_decoder = config.if_add_chord_in_decoder
+        self.chord_idx2symbol = {v: k for k, v in config.chord_dict.items()}
+        self.bar_classes = config.bar_classes
+        self.beat_classes = config.beat_classes
+        self.chord_placeholder_embedding = nn.Embedding(1, config.hidden_size//6)
         output_decoder_config= {k: v for k, v in config.decoder.items()}
         decoder_config = LlamaConfig.from_dict(output_decoder_config)
         self.attn_implementation = config._attn_implementation #this determines whether or not to apply music RoPE
@@ -1971,7 +1983,12 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
         self.lm_head = nn.Linear(config.decoder["hidden_size"], config.decode_vocab_size, bias=False) 
         if self.if_add_metadata_in_decoder:
             self.gru_condition_layer = nn.Linear(11*config.hidden_size, decoder_config.hidden_size, bias=False) 
-
+        if self.if_add_chord_in_decoder:
+            self.chord_condition_layer = nn.Sequential(
+                nn.Linear(config.hidden_size // 6 + self.bar_classes + self.beat_classes, decoder_config.hidden_size//2, bias=False),
+                nn.ReLU(), 
+                nn.Linear(decoder_config.hidden_size//2, decoder_config.hidden_size, bias=False))
+                
         # # Initialize weights array with ones
         # weights = torch.ones(self.config.decode_vocab_size)
 
@@ -2014,7 +2031,7 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
         input_ids: Optional[torch.LongTensor] = None, # need to be provided during training/evaluation
         input_ids_encoded: Optional[torch.Tensor] = None, # need to be provided during inference
         metadata_condition: Optional[torch.Tensor] = None, # need to be provided during inference
-        chord_condition: Optional[torch.Tensor] = None,
+        bar_beat_chord_condition: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Union[Cache, List[torch.FloatTensor]]] = None,
@@ -2124,7 +2141,6 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
                 position_ids = input_ids
             elif self.attn_implementation == "sdpa_baseline":
                 position_ids = position_ids
-            # print(f"check model input:{input_ids}, attention_mask:{attention_mask}, chord_condition:{position_ids}, attention_mask:{attention_mask}", )
             outputs = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -2163,7 +2179,7 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
             logits_list = []
             labels_list = []
             metadata_condition_list = []
-            chord_condition_list = []
+            bar_beat_chord_condition_list = []
             for batch_idx in range(batch_size):
                 # Find the indices of the `sos` and `eos` tokens in the current sequence
                 seq_indices_sos = (input_ids[batch_idx, :, 0] == self.sos_token).nonzero(as_tuple=True)[0].item()
@@ -2176,10 +2192,22 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
                     metadata_condition_embedded_single = self.model.supplementary_embedding_metadata(torch.tensor([additional_token_map[token.item()] for token in metadata_condition[batch_idx]]).to(input_ids)).reshape(-1).unsqueeze(0).expand(seq_indices_eos - seq_indices_sos, -1).to(shift_logits_x) #11, dim --> 11*dim --> (1, 11*dim), (len, 11*dim)
                     metadata_condition_shrinked = self.gru_condition_layer(metadata_condition_embedded_single).unsqueeze(1) #(len, 11*dim) --> (len, dim) --> len, 1, dim
                     metadata_condition_list.append(metadata_condition_shrinked)
-                    # print(f"metadata_condition_embedded_single{metadata_condition_embedded_single}, metadata_condition_shrinked:{metadata_condition_shrinked}")
                 if self.if_add_chord_in_decoder: 
-                    chord_condition_embedded_single = self.model.supplementary_embedding_chord(chord_condition).unsqueeze(1) #(len, ) --> (len, dim) --> (len, 1, dim)
-                    chord_condition_list.append(chord_condition_embedded_single)
+                    bar_OH = F.one_hot(bar_beat_chord_condition[batch_idx, : seq_indices_eos - seq_indices_sos, 0].long(), num_classes=self.bar_classes).to(input_ids) #(len, bar_classes)
+                    beat_OH = F.one_hot(bar_beat_chord_condition[batch_idx, : seq_indices_eos - seq_indices_sos, 1].long(), num_classes=self.beat_classes).to(input_ids) #(len, beat_classes)
+                    #FME/WE:
+                    chord_condition = []
+                    for chord in [self.chord_idx2symbol[chord_idx.item()] for chord_idx in bar_beat_chord_condition[batch_idx, : seq_indices_eos - seq_indices_sos, 2]]:
+                        if chord!="s":
+                            embedded_pitches = self.model.pitch_embedding(torch.tensor(chord_to_midi(chord)).unsqueeze(0).to(input_ids)) # (1, num_pitches, dim)
+                            chord_condition.append(embedded_pitches.sum(dim = 1)) # (1, dim)
+                        else: 
+                            chord_condition.append(self.chord_placeholder_embedding(torch.tensor([0]).to(input_ids))) # (1, dim)
+                    chord_condition_cat = torch.cat(chord_condition, dim = 0) # (len, dim)
+                    bar_beat_chord_condition_cat = torch.cat([bar_OH, beat_OH, chord_condition_cat], dim = -1)
+                    bar_beat_chord_condition_cat_linear = self.chord_condition_layer(bar_beat_chord_condition_cat).unsqueeze(1)
+
+                    bar_beat_chord_condition_list.append(bar_beat_chord_condition_cat_linear)
 
                 logits_list.append(logits_between_sos_eos)
                 labels_list.append(labels_between_sos_eos)
@@ -2187,10 +2215,9 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
             shift_logits_x = torch.cat(logits_list, dim = 0) #len_concat, dim
             shift_labels_x = torch.cat(labels_list, dim = 0) #len_concat, onset_vocab_size + dur_size + .. + vel_size
             if self.if_add_metadata_in_decoder:
-                metadata_condition_embedded = torch.cat(metadata_condition_list, dim = 0) #(len_concat, 1, dim) #TODO: decide from config whether or not to add metadata condition and chord condition to GRU 
-                # print(f"metadata_condition_embedded:{metadata_condition_embedded}")
+                metadata_condition_embedded = torch.cat(metadata_condition_list, dim = 0) #(len_concat, 1, dim)
             if self.if_add_chord_in_decoder:
-                chord_condition_embedded = torch.cat(chord_condition_list, dim = 0) #(len_concat, 1, dim)
+                bar_beat_chord_condition_embedded = torch.cat(bar_beat_chord_condition_list, dim = 0) #(len_concat, 1, dim)
             if self.decoder_attn_implementation == "output": #DANGEROURS: here shift labels does not contain SOS_decoding token 
                 # 1. get the "SOS" token for each decoding step
                 music_summary = shift_logits_x.view(-1, shift_logits_x.shape[-1]).unsqueeze(1) #batch*(len_x-1), 1, dim 
@@ -2230,11 +2257,9 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
                 shift_labels_x_y_encoded = self.decoder_embedding(shift_labels_x_flattened[:, :-1]) #batch*(len_x-1), len_y-1(:-1), dim
 
                 if self.if_add_metadata_in_decoder:
-                    # print(f"shift_labels_x_y_encoded before:{shift_labels_x_y_encoded}")
                     shift_labels_x_y_encoded =  shift_labels_x_y_encoded + metadata_condition_embedded
-                    # print(f"decoder_input:{decoder_input}")
                 if self.if_add_chord_in_decoder:
-                    shift_labels_x_y_encoded += chord_condition_embedded
+                    shift_labels_x_y_encoded =  shift_labels_x_y_encoded + bar_beat_chord_condition_embedded
                 generation_logits, generation_hidden_state = self.decoder(shift_labels_x_y_encoded, shift_logits_x_flattened.unsqueeze(0).expand(self.decoder.num_hidden_layers, -1, -1)) #batch*(len_x-1), len_y-1, decode_vocab_size
 
                 generation_logits = [generation_logits]
@@ -2246,7 +2271,7 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
             shift_labels_x_y = shift_labels_x_y.view(-1)
             loss = self.loss_func(generation_logits, shift_labels_x_y)
         elif decoded_language_tokens is not None and decoded_hidden_state is not None: #else during inference (decoding)--> inference autoregressively, return generated tokens
-            if self.decoder_attn_implementation == "GRU":              
+            if self.decoder_attn_implementation == "GRU":    
                 decoded_language_tokens_encoded = self.decoder_embedding(decoded_language_tokens)##batch*len_x, len_y--> batch*lenx, len_y, dim
                 decoder_input = decoded_language_tokens_encoded
                 if self.if_add_metadata_in_decoder:
@@ -2258,8 +2283,24 @@ class LlamaForCausalLM_Conditional_Generation(LlamaPreTrainedModel):
                         ])
                     ).reshape(metadata_condition.shape[0] , -1).unsqueeze(1)  # Reshape and move to the same device as input_ids #batch, 11 --> batch, 11, dim --> batch, 11*dim, --> batch, 1, 11*dim
                     metadata_condition_shrinked = self.gru_condition_layer(metadata_condition) #(batch, 1, 11*dim) --> (batch, 1, dim)
-                    # print("within modeling llama", metadata_condition_shrinked.shape, decoded_language_tokens_encoded.shape, decoded_hidden_state.shape)
                     decoder_input = decoder_input+metadata_condition_shrinked
+                if self.if_add_chord_in_decoder:
+                    # bar_beat_chord_condition: batch*len, 3 --> batch*len, 1, dim
+                    bar_OH = F.one_hot(bar_beat_chord_condition[:, 0].long(), num_classes=self.bar_classes).to(input_ids) #(batch*len, bar_classes)
+                    beat_OH = F.one_hot(bar_beat_chord_condition[:, 1].long(), num_classes=self.beat_classes).to(input_ids) #(batch*len, beat_classes)
+                    #FME/WE:
+                    chord_condition = []
+                    for chord in [self.chord_idx2symbol[chord_idx.item()] for chord_idx in bar_beat_chord_condition[:, 2]]:
+                        if chord!="s":
+                            embedded_pitches = self.model.pitch_embedding(torch.tensor(chord_to_midi(chord)).unsqueeze(0).to(input_ids)) # (1, num_pitches, dim)
+                            chord_condition.append(embedded_pitches.sum(dim = 1)) # (1, dim)
+                        else: 
+                            chord_condition.append(self.chord_placeholder_embedding(torch.tensor([0]).to(input_ids))) # (1, dim)
+                    chord_condition_cat = torch.cat(chord_condition, dim = 0) # (batch*len, dim)
+                    bar_beat_chord_condition_cat = torch.cat([bar_OH, beat_OH, chord_condition_cat], dim = -1)
+                    bar_beat_chord_condition_cat_linear = self.chord_condition_layer(bar_beat_chord_condition_cat).unsqueeze(1)
+                    decoder_input = decoder_input+bar_beat_chord_condition_cat_linear
+
                 generation_logits_flattened, generation_hidden_state_flattened = self.decoder(decoder_input, decoded_hidden_state) #output: batch*len_x, len_y, dim ,  hidden state: num_layers, batch*len_x, dim
                 
                 generation_logits = generation_logits_flattened.view(decoded_language_tokens_encoded.shape[0],decoded_language_tokens_encoded.shape[1], -1) #batch*len_x, len_y, decode_vocab_size
