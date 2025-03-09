@@ -13,7 +13,10 @@ from generation import MusicLlama
 import random
 import ast
 import json
-
+def find_chord_string(filename, csv_file):
+    df = pd.read_csv(csv_file)
+    chord_str = df[df['id'] == filename.split("_")[-1][:-4]]['chord_progressions'].values[0]
+    return chord_str
 def metadata_id2label(metadata_id, additional_token_dict_inv):
     label = [additional_token_dict_inv[x].replace("/",".") for x in metadata_id]
     return "-".join(label)
@@ -98,21 +101,30 @@ def main(
     test_metadata_ids = [list(ast.literal_eval(l)) for l in test_metadata_ids]
     test_filenames_chord = df[df['split'] == split]['chord_file_base_name'].tolist()
     
+    #temporary fix: find chord symbols from original csv file
+    test_filenames_chord_str = [find_chord_string(x, "/data/scratch/acw753/datasets/commu/commu_meta.csv") for x in test_filenames]
 
-    test_files = list(zip(test_filenames, test_metadata_ids, test_filenames_chord))
+    test_files = list(zip(test_filenames, test_metadata_ids, test_filenames_chord, test_filenames_chord_str))
     test_files_sampled = random.sample(test_files, num_test_data)
     prompts = []
     metadata_condition_decoder = []
-    metadata_condition_decoder = []
-    print(f"if_add_chords_in_transformer: {if_add_chords_in_transformer}, if_add_metadata_in_transformer: {if_add_metadata_in_transformer}")
+    chord_condition_decoder = []
+    bpm_condition = []
+    time_signature_condition = []
+    num_measures_condition = []
     if_add_chords_in_decoder = generator.model.if_add_chord_in_decoder
     if_add_metadata_in_decoder = generator.model.if_add_metadata_in_decoder
-
-    for filename, metadata_id, chord_file_name in test_files_sampled:
+    print(f"if_add_chords_in_transformer: {if_add_chords_in_transformer}, if_add_metadata_in_transformer: {if_add_metadata_in_transformer}")
+    print(f"if_add_chords_in_decoder: {if_add_chords_in_decoder}, if_add_metadata_in_decoder: {if_add_metadata_in_decoder}")
+    for filename, metadata_id, chord_file_name, chord_str in test_files_sampled:
         print(f"Loading filename: {filename}, chord_file_name: {chord_file_name}")
         raw_tokens = np.load(os.path.join(os.path.dirname(csv_file), "processed",filename))
         raw_tokens_chord = np.load(os.path.join(os.path.dirname(csv_file), "processed",chord_file_name))
         metadata_condition_decoder.append(metadata_id)
+        bpm_condition.append(int(additional_token_dict_inv[metadata_id[3]].split("_")[-1]))
+        time_signature_condition.append(additional_token_dict_inv[metadata_id[-3]].split("_")[-1])
+        num_measures_condition.append(int(additional_token_dict_inv[metadata_id[2]].split("_")[-1]))
+        chord_condition_decoder.append(ast.literal_eval(chord_str)[0]) #TODO: think of what to add
         metadata_id = [[x for _ in range(6)] for x in metadata_id] #TODO: think of a better way to do this
         test_data_with_sos = generator.tokenizer.encode_series_con_gen_commu(raw_tokens, raw_tokens_chord, metadata_tokens = metadata_id, if_only_keep_condition_tokens = True, if_add_chords_in_transformer = if_add_chords_in_transformer, if_add_metadata_in_transformer = if_add_metadata_in_transformer)
         prompts.append(test_data_with_sos)
@@ -120,7 +132,7 @@ def main(
     if not if_add_metadata_in_decoder: 
         metadata_condition_decoder = None
     if not if_add_chords_in_decoder:
-        chord_condition = None
+        chord_condition_decoder = None
 
     condition_token_lengths = [len(x) for x in prompts]
     if if_add_chords_in_transformer:
@@ -130,13 +142,17 @@ def main(
     
     results = generator.music_completion(
         prompts, #this controls whether condition exists in the transformer
+        bpm_condition = bpm_condition,
+        time_signature_condition = time_signature_condition,
+        num_measures_condition = num_measures_condition,
         metadata_condition = metadata_condition_decoder, #this controls whether condition exists in the decoder
-        chord_condition = chord_condition, 
+        chord_condition = chord_condition_decoder, 
         max_gen_len=max_gen_len,
         temperature=temperature,
         top_p=top_p,
         condition_token_lengths = condition_token_lengths, #remove sos token and emotion token
-        chord_token_indices = chord_token_indices
+        chord_token_indices = chord_token_indices,
+        chord_dict_path = "/data/scratch/acw753/finetune/commu_con_gen/chord_dictionary.json" #temporary fix: add chord dict path
     )
     
     save_folder = os.path.join(finetuned_PEFT_weight_path, os.path.basename(ckpt_dir), f"temperature_{temperature}_top_p_{top_p}")
