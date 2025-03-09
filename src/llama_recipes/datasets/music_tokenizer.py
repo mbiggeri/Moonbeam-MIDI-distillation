@@ -397,7 +397,6 @@ class MusicTokenizer():
                         #del open_notes[(instr,message.note,message.channel)]
             elif message.type == 'set_tempo':
                 tempo = message.tempo
-                if tempo!=500000:
             elif message.type == 'time_signature':
                 pass # we use real time
             elif message.type in ['aftertouch', 'polytouch', 'pitchwheel', 'sequencer_specific']:
