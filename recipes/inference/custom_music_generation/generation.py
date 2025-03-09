@@ -285,6 +285,9 @@ class MusicLlama:
     def generate(
         self,
         prompt_tokens: List[List[List[int]]],
+        bpm_condition: List[int],
+        time_signature_condition: List[str],
+        num_measures_condition: List[int],
         max_gen_len: int,
         temperature: float = 0.6,
         top_p: float = 0.9,
@@ -293,6 +296,7 @@ class MusicLlama:
         metadata_condition: List = None, 
         chord_condition: List = None,
         condition_token_lengths: List[int] = None,
+        chord_dict_path: str = None,
     ) -> Tuple[List[List[int]], Optional[List[List[float]]]]:
         """
         Generate text sequences based on provided prompts using the language generation model.
@@ -313,7 +317,8 @@ class MusicLlama:
             If logprobs is True, token log probabilities are computed for each generated token.
 
         """
-
+        with open(chord_dict_path, "r") as f:
+            chord_dict = json.load(f)
         bsz = len(prompt_tokens)
         if metadata_condition is not None:
             metadata_tokens = torch.tensor(metadata_condition)
@@ -330,7 +335,13 @@ class MusicLlama:
             t_tensor = torch.tensor(t, dtype=torch.long, device="cuda")  # (len_t, 6) 
             tokens[k, :len(t)] = t_tensor  #tokens[k, :len(t)] --> len_t, 6
 
-
+        #fill another pad tensor with start bar, beat, chord 
+        if chord_condition is not None:
+            bar_beat_chord_pad_id = [0, 0, 61] #bar = 0, beat = 0, chord = "s"
+            bar_beat_chord_pad_tensor = torch.tensor(bar_beat_chord_pad_id, dtype=torch.long, device="cuda").unsqueeze(0).unsqueeze(0) #create a tensor with shape: (bsz, total_len, 6) filled with pad_id
+            bar_beat_chord_condition = bar_beat_chord_pad_tensor.expand(bsz, total_len, -1).clone() # 3, --> bsz, total_len, 3
+        else:
+            bar_beat_chord_condition = None
         prev_pos = 0
         eos_reached = torch.tensor([False] * bsz, device="cuda")
         input_mask = torch.all(tokens != pad_tensor, dim=-1).unsqueeze(-1) #(batch, len, 1)
@@ -351,8 +362,13 @@ class MusicLlama:
                 metadata_tokens_expanded = metadata_tokens.to(tokens).unsqueeze(1).expand(-1, cur_pos - prev_pos, -1).reshape(tokens.shape[0]*(cur_pos - prev_pos), -1) #batch, 11 --> batch, 1, 11 --> batch*cur_pos - prev_pos, 11
             else:
                 metadata_tokens_expanded = None
+            if chord_condition is not None:
+                bar_beat_chord_condition_expanded = bar_beat_chord_condition[:, prev_pos:cur_pos].reshape(-1, 3) #batch, len, 3
+            else:
+                bar_beat_chord_condition_expanded = None
+
             for attribute in ["timeshift_dict_decode", "duration_dict_decode", "octave_dict_decode", "pitch_dict_decode", "instrument_dict_decode", "velocity_dict_decode"]:
-                output_decoder = self.model.forward(decoded_hidden_state = hidden_state, decoded_language_tokens = next_decoder_token, attention_mask = None, metadata_condition = metadata_tokens_expanded)
+                output_decoder = self.model.forward(decoded_hidden_state = hidden_state, decoded_language_tokens = next_decoder_token, attention_mask = None, metadata_condition = metadata_tokens_expanded, bar_beat_chord_condition = bar_beat_chord_condition_expanded)
                 generation_logits = output_decoder.generation_logits ##batch*len_x, len_y, decode_vocab_size
                 hidden_state = output_decoder.generation_hidden_state ##num_layers, batch*len_x, dim
 
@@ -390,10 +406,8 @@ class MusicLlama:
             #remove the sos_out token 
             next_decoder_token_out_reshaped = next_decoder_token_out[:, 1:].view(tokens.shape[0], -1 ,6) #batch*len_x, 6 --> batch, len_x, 6
             next_decoder_token_lang = self.tokenizer.convert_from_language_tokens(next_decoder_token_out_reshaped) #batch, lenx, 6 
-            # print(f"next_decoder_token_out_reshaped:{next_decoder_token_out_reshaped}")
             previous_onset = tokens[:, cur_pos-1, 0] #batch, 
-            if any(previous_onset < 0):
-                #if any value in previous_onset is smaller than 0, replace it with zero
+            if any(previous_onset < 0): #when encountering the sos token (onset = 0), replace the onset with 0
                 previous_onset = torch.where(previous_onset < 0, torch.zeros_like(previous_onset), previous_onset)
             new_onset = previous_onset + next_decoder_token_lang.clone().detach()[:, -1, 0].to(previous_onset) #batch, + batch --> batch
             next_decoder_token_onset = torch.cat ([new_onset.unsqueeze(-1) ,next_decoder_token_lang.clone().detach()[:, -1, 1:]],dim=-1).to(tokens) #batch, 1  cat  batch, 5
@@ -402,6 +416,13 @@ class MusicLlama:
             ) 
             tokens[:, cur_pos] = next_token
 
+            #calculate the next position of the chord: bar, beat, chord
+            if chord_condition is not None:
+                bar_beat_chord_new_onset = onset2bar_beat_chord(next_token[:, 0], chord_condition ,time_signature_condition, bpm_condition, num_measures_condition, chord_dict)
+                bar_beat_chord_new_onset_skip_pad = torch.where(input_mask[:, cur_pos], bar_beat_chord_condition[:, cur_pos], bar_beat_chord_new_onset) 
+                bar_beat_chord_condition[:, cur_pos] = bar_beat_chord_new_onset_skip_pad
+                print(f"bar_beat_chord_new_onset:{bar_beat_chord_new_onset}, bar_beat_chord_new_onset_skip_pad:{bar_beat_chord_new_onset_skip_pad}")
+            
             """check if next token is eos"""
             eos_conditions_onset= next_decoder_token_lang.clone().detach()[:, -1, 0] == self.tokenizer.eos_timeshift #batch, 
             eos_conditions_dur = next_decoder_token_lang.clone().detach()[:, -1, 1] == self.tokenizer.eos_dur #batch,
@@ -458,6 +479,9 @@ class MusicLlama:
     def music_completion(
         self,
         prompt_tokens: List[List[List[int]]],
+        bpm_condition: List[int],
+        time_signature_condition: List[str],
+        num_measures_condition: List[int],
         metadata_condition: List = None, 
         chord_condition: List = None,
         temperature: float = 0.6,
@@ -466,6 +490,7 @@ class MusicLlama:
         logprobs: bool = False,
         condition_token_lengths: List[int] = None,
         chord_token_indices: List[List[int]] = None,
+        chord_dict_path: str = None,
     ):
         """
         Generate assistant responses for a list of conversational dialogs using the language generation model.
@@ -494,6 +519,9 @@ class MusicLlama:
         # ]
         generation_tokens, generation_logprobs = self.generate(
             prompt_tokens=prompt_tokens,
+            bpm_condition = bpm_condition,
+            time_signature_condition = time_signature_condition,
+            num_measures_condition = num_measures_condition,
             metadata_condition=metadata_condition, 
             chord_condition = chord_condition,
             max_gen_len=max_gen_len,
@@ -501,7 +529,8 @@ class MusicLlama:
             top_p=top_p,
             logprobs=logprobs,
             echo = True,
-            condition_token_lengths = condition_token_lengths
+            condition_token_lengths = condition_token_lengths,
+            chord_dict_path = chord_dict_path
         )
         if chord_token_indices is not None:
             chord_tokens = [prompt_tokens[i][chord_token_indices[i][0]+1:chord_token_indices[i][1]] for i in range(len(prompt_tokens))]
@@ -604,3 +633,62 @@ def sample_top_p(probs, p):
     next_token = torch.multinomial(probs_sort, num_samples=1)
     next_token = torch.gather(probs_idx, -1, next_token)
     return next_token
+
+def onset2bar_beat_chord(onsets, chord_condition, time_signature_condition, bpm_condition, num_measures_condition, chord_dict):
+    batch_size = onsets.size(0)
+    output = []
+    
+    for i in range(batch_size):
+        # Extract data for current batch element
+        onset_abs = onsets[i].item()
+        numerator = int(time_signature_condition[i].split("/")[0])
+        denominator = int(time_signature_condition[i].split("/")[1])
+        bpm = bpm_condition[i]
+        is_incomplete_measure = num_measures_condition[i]%4!=0 
+        if is_incomplete_measure:
+            chords = ["s"]*8 + chord_condition[i]  # List of chord symbols for this batch
+        else:
+            chords = chord_condition[i]  # List of chord symbols for this batch
+        # Convert absolute time to seconds
+        onset_sec = onset_abs / 100.0 * (120 / bpm) #data normalized to 120 bpm now need to convert it back
+        
+        # Compute total beats
+        total_beats = (onset_sec * bpm ) / 60.0
+        
+        # Compute bar number (0-based)
+        # bar_number = int(total_beats // numerator)
+        bar_len_in_beats = numerator * (4 / denominator)
+        bar_number = int(total_beats // bar_len_in_beats)
+
+        
+        # Position within the bar in beats
+        position_in_bar_beats = total_beats % numerator
+        
+        # Convert position to 32nd notes within the bar
+        # Each beat has (32 / denominator) 32nd notes --> each beat has 8 32nd notes 
+        # position_in_32nd = position_in_bar_beats * (32.0 / denominator) #this seems to be wrong 
+        position_in_32nd = position_in_bar_beats * 8 #8 32nd notes per beat
+
+        quantized_32nd = round(position_in_32nd)
+        """# Handle wrap-around for bar's 32nd note capacity
+        max_32nd_per_bar = numerator * (32 // denominator)
+        quantized_32nd = quantized_32nd % max_32nd_per_bar"""
+        
+        # Calculate maximum 32nd notes per bar
+        # max_32nd_per_bar = numerator * (32 // denominator)
+        max_32nd_per_bar = bar_len_in_beats * 8 #8 32nd notes per beat
+        # Handle bar overflow from quantization
+        quantized_32nd = quantized_32nd % max_32nd_per_bar
+        
+        """# Check if quantization pushed us to next bar
+        if quantized_32nd == 0 and position_in_32nd >= (1 + max_32nd_per_bar - 0.5):
+            bar_number += 1"""
+
+        # Find chord index based on 8th note divisions
+        total_8th_notes = total_beats * 2.0  # Each beat has 2 8th notes
+        chord_index = int(total_8th_notes) % len(chords) #this is an ugly fix!
+        chord_symbol = chord_dict[chords[chord_index]]
+        # Append [bar, quantized_32nd, chord_midi]
+        output.append([bar_number, quantized_32nd, chord_symbol])
+    
+    return torch.tensor(output)
