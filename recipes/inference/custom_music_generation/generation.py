@@ -381,10 +381,17 @@ class MusicLlama:
                     for i in range(next_decoder_token.size(0)):  # Ensure that all next_decoder_token values are in sample_indices
                         start_time = time.time()
                         while next_decoder_token[i, 0].item() not in sample_indices_set:  # Check if token is valid
-                            next_decoder_token[i, 0] = sample_top_p(probs, top_p)[i, 0]  # Resample and replace in-place
-                            if time.time() - start_time > 15:  # If the loop runs for more than 5 seconds, print a warning
-                                print(f"Warning: Resampling for token {i} has taken longer than 15 seconds.")
-                                break
+                            if time.time() - start_time > 15:  # If sampling takes too long, mask invalid indices
+                                print(f"Warning: Resampling for token {i} exceeded 15 seconds. Masking invalid logits and Resampling...")
+                                
+                                # Set logits of invalid indices to -inf
+                                mask = torch.full_like(probs, float('-inf'))
+                                mask[:, sample_indices] = probs[:, sample_indices]  
+
+                                # Recompute probabilities with the mask
+                                probs = torch.softmax(mask, dim=-1)
+
+                            next_decoder_token[i, 0] = sample_top_p(probs, top_p)[i, 0]  
                 else:
                     probs = torch.softmax(generation_logits[:, -1, :], dim=-1)  #batch*len_x, len_y (last), decode_vocab_size
                     # next_decoder_token_greedy = probs.argmax(dim=-1, keepdim=True) #batch*len_x, 1
@@ -491,6 +498,7 @@ class MusicLlama:
         condition_token_lengths: List[int] = None,
         chord_token_indices: List[List[int]] = None,
         chord_dict_path: str = None,
+        if_return_chords: bool = True
     ):
         """
         Generate assistant responses for a list of conversational dialogs using the language generation model.
@@ -556,18 +564,32 @@ class MusicLlama:
                 }
                 for t, logprobs_i in zip(generation_tokens, generation_logprobs)
             ]
-        return [
-            {
-                "generation": {
-                    "role": "assistant",
-                    "content": self.tokenizer.compound_to_midi_multi(t), #a list of midi objects each contains at most 15 instruments
-                    "chord": self.tokenizer.compound_to_midi_multi([chord]),
-                    "tokens": t,
-                    "chord_tokens": [chord],
-                },
-            }
-            for chord,t in zip(chord_tokens, generation_tokens_post_proc) #t is a list of tensors with shape (len, 6)
-        ]
+        if if_return_chords:
+            return [
+                {
+                    "generation": {
+                        "role": "assistant",
+                        "content": self.tokenizer.compound_to_midi_multi(t), #a list of midi objects each contains at most 15 instruments
+                        "chord": self.tokenizer.compound_to_midi_multi([chord]),
+                        "tokens": t,
+                        "chord_tokens": [chord],
+                    },
+                }
+                for chord,t in zip(chord_tokens, generation_tokens_post_proc) #t is a list of tensors with shape (len, 6)
+            ]
+        else:
+            return [
+                {
+                    "generation": {
+                        "role": "assistant",
+                        "content": self.tokenizer.compound_to_midi_multi(t), #a list of midi objects each contains at most 15 instruments
+                        "chord": None,
+                        "tokens": t,
+                        "chord_tokens": None,
+                    },
+                }
+                for t in generation_tokens_post_proc #t is a list of tensors with shape (len, 6)
+            ]   
     @staticmethod
     def postprocess_split(tokens):
         """Processes tokens to group them into sublists, each containing up to 16 unique instruments.
