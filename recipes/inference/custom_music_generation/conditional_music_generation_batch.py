@@ -113,20 +113,69 @@ def main(
     print(f"if_add_chords_in_transformer: {if_add_chords_in_transformer}, if_add_metadata_in_transformer: {if_add_metadata_in_transformer}")
     print(f"if_add_chords_in_decoder: {if_add_chords_in_decoder}, if_add_metadata_in_decoder: {if_add_metadata_in_decoder}")
     df = pd.read_csv(csv_file)
-    for _, row in df.iterrows():
+    import time
+    # Start time
+    start_time = time.time()
+    finished_idx = 0
+    prompts = []
+    metadata_condition_decoder = []
+    chord_condition_decoder = []
+    bpm_condition = []
+    time_signature_condition = []
+    num_measures_condition = []
+    midi_save_paths = []
+    for i, (_, row) in enumerate(df.iterrows()):
         if row["split_data"] == "train":
+            finished_idx +=1
             continue
+
+        if i == min(finished_idx + max_batch_size, len(df)-1):
+            #generate midi based on the given conditions
+            condition_token_lengths = [len(x) for x in prompts]
+            if if_add_chords_in_transformer:
+                chord_token_indices = [[x.index(generator.tokenizer.soc_token_compound), x.index(generator.tokenizer.eoc_token_compound)] for x in prompts]
+            else:
+                chord_token_indices = None
+
+            results = generator.music_completion(
+                prompts,
+                bpm_condition = bpm_condition,
+                time_signature_condition = time_signature_condition,
+                num_measures_condition = num_measures_condition,
+                metadata_condition = metadata_condition_decoder,
+                chord_condition = chord_condition_decoder, 
+                max_gen_len=max_gen_len,
+                temperature=temperature,
+                top_p=top_p,
+                condition_token_lengths = condition_token_lengths, #remove sos token and emotion token
+                chord_token_indices = chord_token_indices,
+                chord_dict_path = chord_dict_path, 
+                if_return_chords = False
+            )
+            #save midi
+            for midi_save_path, result in zip(midi_save_paths, results):
+                result['generation']['content'][0].save(midi_save_path)
+                print(f"Generated MIDI saved at: {i}, {midi_save_path}")
+
+            #empty the conditions buffer 
+            finished_idx = i
+            prompts = []
+            metadata_condition_decoder = []
+            chord_condition_decoder = []
+            bpm_condition = []
+            time_signature_condition = []
+            num_measures_condition = []
+            midi_save_paths = []
+        
+        
+        #first batch the input: prompts, bpm_condition, time_signature_condition, num_measures_condition, metadata_condition_decoder, chord_condition_decoder, 
         #set save path
         chord_save_path  = os.path.join(save_folder, f"{row['id']}_chords.mid")
-        midi_save_path = os.path.join(save_folder, f"{row['id']}.mid")
+        midi_save_paths.append(os.path.join(save_folder, f"{row['id']}.mid"))
         metadata_save_path = os.path.join(save_folder, f"{row['id']}_metadata.json")
-
-        #get necessary conditions
-        bpm_condition = [row["bpm"]]
-        time_signature_condition = [row["time_signature"]]
-        num_measures_condition = [row["num_measures"]]
+        
+        #batch necessary conditions
         chord_condition_str = ast.literal_eval(row["chord_progressions"])[0]
-
         metadata_id = [
             additional_token_dict["audio_key_" + row["audio_key"]],
             additional_token_dict["pitch_range_" + row["pitch_range"]],
@@ -139,9 +188,20 @@ def main(
             additional_token_dict["time_signature_" + row["time_signature"]],
             additional_token_dict["min_velocity_" + str(row["min_velocity"])],
             additional_token_dict["max_velocity_" + str(row["max_velocity"])]
-        ]
-
-        #create and save chord midi
+        ]      
+        bpm_condition.append(row["bpm"])
+        time_signature_condition.append(row["time_signature"])
+        num_measures_condition.append(row["num_measures"])
+        if if_add_metadata_in_decoder:
+            metadata_condition_decoder.append(metadata_id)  
+        else:
+            metadata_condition_decoder = None
+        if if_add_chords_in_decoder:
+            chord_condition_decoder.append(chord_condition_str)
+        else:
+            chord_condition_decoder = None
+        
+        #create and save chord midi and metadata
         if row["num_measures"]%4==0:
             is_incomplete_measure = False
         else:
@@ -155,35 +215,6 @@ def main(
 
         chord_midi = create_midi_from_chords(chord_condition_str, is_incomplete_measure, ticks_per_bar, normalized_bpm)
         chord_midi.save(chord_save_path)
-
-        raw_tokens_chord = generator.tokenizer.midi_to_compound(chord_save_path, calibate_to_default_tempo = True)
-        prompts = [generator.tokenizer.encode_series_con_gen_commu(None, raw_tokens_chord, metadata_tokens = [[x for _ in range(6)] for x in metadata_id], if_only_keep_condition_tokens = True, if_add_chords_in_transformer = if_add_chords_in_transformer, if_add_metadata_in_transformer = if_add_metadata_in_transformer)]
-        metadata_condition_decoder = [metadata_id] if if_add_metadata_in_decoder else None
-        chord_condition_decoder = [chord_condition_str] if if_add_chords_in_decoder else None
-    
-        condition_token_lengths = [len(x) for x in prompts]
-
-
-        if if_add_chords_in_transformer:
-            chord_token_indices = [[x.index(generator.tokenizer.soc_token_compound), x.index(generator.tokenizer.eoc_token_compound)] for x in prompts]
-        else:
-            chord_token_indices = None
-
-        results = generator.music_completion(
-            prompts,
-            bpm_condition = bpm_condition,
-            time_signature_condition = time_signature_condition,
-            num_measures_condition = num_measures_condition,
-            metadata_condition = metadata_condition_decoder,
-            chord_condition = chord_condition_decoder, 
-            max_gen_len=max_gen_len,
-            temperature=temperature,
-            top_p=top_p,
-            condition_token_lengths = condition_token_lengths, #remove sos token and emotion token
-            chord_token_indices = chord_token_indices,
-            chord_dict_path = chord_dict_path #temporary fix: add chord dict path
-        )
-        results[0]['generation']['content'][0].save(midi_save_path)
 
         #construct metadat diction json
         metadata_dict = {
@@ -202,7 +233,49 @@ def main(
         }
         with open(metadata_save_path, "w") as f:
             json.dump(metadata_dict, f)
-        print(f"Generated MIDI saved at: {midi_save_path}, Chord MIDI condition saved at: {chord_save_path}, Metadata saved at: {metadata_save_path}")
 
+        raw_tokens_chord = generator.tokenizer.midi_to_compound(chord_save_path, calibate_to_default_tempo = True)
+        prompts.append(generator.tokenizer.encode_series_con_gen_commu(None, raw_tokens_chord, metadata_tokens = [[x for _ in range(6)] for x in metadata_id], if_only_keep_condition_tokens = True, if_add_chords_in_transformer = if_add_chords_in_transformer, if_add_metadata_in_transformer = if_add_metadata_in_transformer))
+
+    # After the for-loop ends, check for remaining unprocessed rows
+    if prompts:
+        # Generate MIDI for the remaining batch
+        condition_token_lengths = [len(x) for x in prompts]
+        if if_add_chords_in_transformer:
+            chord_token_indices = [[x.index(generator.tokenizer.soc_token_compound), x.index(generator.tokenizer.eoc_token_compound)] for x in prompts]
+        else:
+            chord_token_indices = None
+
+        results = generator.music_completion(
+            prompts,
+            bpm_condition=bpm_condition,
+            time_signature_condition=time_signature_condition,
+            num_measures_condition=num_measures_condition,
+            metadata_condition=metadata_condition_decoder,
+            chord_condition=chord_condition_decoder, 
+            max_gen_len=max_gen_len,
+            temperature=temperature,
+            top_p=top_p,
+            condition_token_lengths=condition_token_lengths,
+            chord_token_indices=chord_token_indices,
+            chord_dict_path=chord_dict_path, 
+            if_return_chords=False
+        )
+
+        # Save the remaining MIDI files
+        for midi_save_path, result in zip(midi_save_paths, results):
+            result['generation']['content'][0].save(midi_save_path)
+            print(f"Generated MIDI saved at: {midi_save_path}")
+
+    # End time
+    end_time = time.time()
+
+    # Calculate time taken in seconds
+    time_taken_seconds = end_time - start_time
+
+    # Convert to minutes
+    time_taken_minutes = time_taken_seconds / 60
+
+    print(f"The loop took {time_taken_minutes} minutes to execute.")
 if __name__ == "__main__":
     fire.Fire(main)
