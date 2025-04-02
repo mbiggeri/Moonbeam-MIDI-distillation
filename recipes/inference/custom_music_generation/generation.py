@@ -428,7 +428,6 @@ class MusicLlama:
                 bar_beat_chord_new_onset = onset2bar_beat_chord(next_token[:, 0], chord_condition ,time_signature_condition, bpm_condition, num_measures_condition, chord_dict)
                 bar_beat_chord_new_onset_skip_pad = torch.where(input_mask[:, cur_pos], bar_beat_chord_condition[:, cur_pos], bar_beat_chord_new_onset) 
                 bar_beat_chord_condition[:, cur_pos] = bar_beat_chord_new_onset_skip_pad
-                print(f"bar_beat_chord_new_onset:{bar_beat_chord_new_onset}, bar_beat_chord_new_onset_skip_pad:{bar_beat_chord_new_onset_skip_pad}")
             
             """check if next token is eos"""
             eos_conditions_onset= next_decoder_token_lang.clone().detach()[:, -1, 0] == self.tokenizer.eos_timeshift #batch, 
@@ -682,7 +681,7 @@ def onset2bar_beat_chord(onsets, chord_condition, time_signature_condition, bpm_
         bar_len_in_beats = numerator * (4 / denominator)
         bar_number = int(total_beats // bar_len_in_beats)
 
-        
+        bar_number = min(bar_number, num_measures_condition[i]-1) #happens when one of the sequences in the batch reaches max num measures
         # Position within the bar in beats
         position_in_bar_beats = total_beats % numerator
         
