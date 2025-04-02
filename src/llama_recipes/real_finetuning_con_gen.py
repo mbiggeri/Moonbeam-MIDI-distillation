@@ -1,6 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
-
 import os
 import json
 import dataclasses
@@ -19,7 +16,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim.lr_scheduler import StepLR
 from transformers import (
     AutoTokenizer,
-    LlamaForCausalLM_Conditional_Generation,
+    LlamaForCausalLM,
     LlamaConfig,
 )
 from llama_recipes.datasets.music_tokenizer import MusicTokenizer
@@ -28,7 +25,7 @@ from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 from llama_recipes.configs import fsdp_config as FSDP_CONFIG
 from llama_recipes.configs import ddp_config as DDP_CONFIG
 from llama_recipes.configs import train_config as TRAIN_CONFIG
-from llama_recipes.data.concatenator import ConcatDataset, ConcatDataset_dummy_padding
+from llama_recipes.data.concatenator import ConcatDataset_hybrid_padding_concatenating
 from llama_recipes.policies import AnyPrecisionAdamW, apply_fsdp_checkpointing
 from llama_recipes.model_checkpointing import load_model_checkpoint_ddp
 
@@ -91,7 +88,7 @@ def setup_wandb(train_config, fsdp_config, llama_config, **kwargs):
 def main(**kwargs):
     # Update the configuration for the training and sharding process
     train_config, fsdp_config, ddp_config = TRAIN_CONFIG(), FSDP_CONFIG(), DDP_CONFIG()
-    model_config_path = "src/llama_recipes/configs/model_config_commu_con_gen.json"
+    model_config_path = "src/llama_recipes/configs/model_config.json"
     update_config((train_config, fsdp_config, ddp_config), **kwargs)
     print("updated training config", train_config)
     # Set the seeds for reproducibility
@@ -100,7 +97,7 @@ def main(**kwargs):
     torch.manual_seed(train_config.seed)
     random.seed(train_config.seed)
 
-    if train_config.enable_fsdp or train_config.enable_ddp: #TODO: what is this? Read this  https://arxiv.org/pdf/2304.11277#:~:text=Fully%20Sharded%20Data%20Parallel%20(FSDP)%20is%20capable%20of%20scaling%20to,by%20sharding%20the%20dense%20parameters. 
+    if train_config.enable_fsdp or train_config.enable_ddp:
         setup() #enable nccl / ccl
         # torchrun specific
         local_rank = int(os.environ["LOCAL_RANK"])
@@ -144,9 +141,9 @@ def main(**kwargs):
         llama_config = LlamaConfig.from_pretrained(model_config_path)
         llama_config.use_cache = use_cache
         print(f"model_config:{llama_config}")
-        model = LlamaForCausalLM_Conditional_Generation(llama_config) #TODO: commu specific, modify this model
+        model = LlamaForCausalLM(llama_config)
 
-        model_checkpoint = torch.load(train_config.trained_checkpoint_path) #, , map_location = 'cuda:{}'.format(local_rank)
+        model_checkpoint = torch.load(train_config.trained_checkpoint_path)
         
         checkpoint = model_checkpoint['model_state_dict']
         new_state_dict = {}
@@ -159,7 +156,7 @@ def main(**kwargs):
         missing_keys, unexpected_keys = model.load_state_dict(new_state_dict, strict=False)
         print(f"when loading checkpoint, encounter missing keys: {missing_keys}; unexpected_keys:{unexpected_keys}")
 
-    if train_config.use_wandb: #TODO update ddp config
+    if train_config.use_wandb:
         if not train_config.enable_fsdp or rank==0:
             wandb_run = setup_wandb(train_config, fsdp_config, llama_config, **kwargs)
 
@@ -168,18 +165,6 @@ def main(**kwargs):
     tokenizer = MusicTokenizer(timeshift_vocab_size = llama_config.onset_vocab_size, dur_vocab_size = llama_config.dur_vocab_size, octave_vocab_size = llama_config.octave_vocab_size, pitch_class_vocab_size = llama_config.pitch_class_vocab_size, instrument_vocab_size = llama_config.instrument_vocab_size, velocity_vocab_size = llama_config.velocity_vocab_size, sos_token = llama_config.sos_token, eos_token = llama_config.eos_token, pad_token = llama_config.pad_token)
 
     dataset_config = generate_dataset_config(train_config, kwargs)
-    #Open json and add new tokens to the tokenizer 
-    with open(dataset_config.additional_token_dict_path, "r") as f:
-        additional_token_dict = json.load(f)
-    for key, value in additional_token_dict.items():
-        tokenizer.add_new_tokens(token_name = key, token_val = value)
-        print(f"added {key} to tokenizer")
-
-    # If there is a mismatch between tokenizer vocab size and embedding matrix, 
-    # throw a warning and then expand the embedding matrix
-    # if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
-    #     print("WARNING: Resizing the embedding matrix to match the tokenizer vocab size.")
-    #     model.resize_token_embeddings(len(tokenizer)) #Commented out since there's no tokenizer here
 
     print_model_size(model, train_config, rank if train_config.enable_fsdp or train_config.enable_ddp else 0)
 
@@ -194,14 +179,14 @@ def main(**kwargs):
     if train_config.enable_ddp and ddp_config.pure_bf16:
         model.to(torch.bfloat16)
 
-    if train_config.use_peft: #TODO: Switch on PEFT, think how to make the embedding of the extra tokens trainable 
+    if train_config.use_peft: 
         peft_config = generate_peft_config(train_config, kwargs)
         model = get_peft_model(model, peft_config)
         model.print_trainable_parameters()
         if wandb_run:
             wandb_run.config.update(peft_config)
 
-    hsdp_device_mesh = None #TODO change this to include ddp
+    hsdp_device_mesh = None 
     if fsdp_config.hsdp and fsdp_config.sharding_strategy == ShardingStrategy.HYBRID_SHARD:
         hsdp_device_mesh = hsdp_device_mesh(replica_group_size=fsdp_config.replica_group_size, sharding_group_size=fsdp_config.sharding_group_size)
         print("HSDP device mesh is ready")
@@ -235,7 +220,7 @@ def main(**kwargs):
             if train_config.low_cpu_fsdp and rank != 0 else None,
         )
         if fsdp_config.fsdp_activation_checkpointing:
-            apply_fsdp_checkpointing(model) #TODO: Add DDP
+            apply_fsdp_checkpointing(model) 
     elif train_config.enable_ddp: #wrap ddp code
         mixed_precision_policy, wrapping_policy = get_policies(ddp_config, rank)
         model.to(local_rank)
@@ -243,7 +228,7 @@ def main(**kwargs):
                     mixed_precision=mixed_precision_policy if not ddp_config.pure_bf16 else None, 
                     device_mesh=hsdp_device_mesh,
                     device_ids=[local_rank],
-                    find_unused_parameters=True,
+                    find_unused_parameters=False,
                     )
     elif not train_config.quantization and not train_config.enable_fsdp:
         if is_xpu_available():
@@ -262,14 +247,13 @@ def main(**kwargs):
     if not train_config.enable_fsdp or rank == 0:
         print(f"--> Training Set Length = {len(dataset_train)}")
 
-    """dataset_val removed for finetuned generative models"""
     dataset_val = get_preprocessed_dataset(
         tokenizer,
         dataset_config,
         split="test",
     )
     if train_config.batching_strategy == "packing":
-        dataset_train = ConcatDataset_dummy_padding(dataset_train, chunk_size=train_config.context_length, split="train",data_dir = dataset_config.data_dir)
+        dataset_train = ConcatDataset_hybrid_padding_concatenating(dataset_train, chunk_size=train_config.context_length, split="train",data_dir = dataset_config.data_dir)
 
     train_dl_kwargs = get_dataloader_kwargs(train_config, dataset_train, tokenizer, "train")
 
@@ -284,7 +268,7 @@ def main(**kwargs):
     eval_dataloader = None
     if train_config.run_validation:
         if train_config.batching_strategy == "packing":
-            dataset_val = ConcatDataset_dummy_padding(dataset_val, chunk_size=train_config.context_length, split="val", data_dir = dataset_config.data_dir ) 
+            dataset_val = ConcatDataset_hybrid_padding_concatenating(dataset_val, chunk_size=train_config.context_length, split="val", data_dir = dataset_config.data_dir ) 
 
         val_dl_kwargs = get_dataloader_kwargs(train_config, dataset_val, tokenizer, "val")
 
@@ -312,15 +296,8 @@ def main(**kwargs):
             weight_decay=train_config.weight_decay,
         )
 
-    """#if trained_ckpt is provided, continue training
-    if train_config.trained_checkpoint_path:
-        starting_epoch, starting_step = load_model_checkpoint_ddp(model, optimizer, local_rank, train_config.trained_checkpoint_path)
-        print(f"Model loaded with checkpoint: {train_config.trained_checkpoint_path}, {starting_epoch=} {starting_step=}")
-    else:
-        starting_epoch, starting_step = 0, 0"""
     starting_epoch, starting_step = 0, 0
 
-    
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
     print("check model trainable parameters")
     total_trainable = 0
@@ -332,7 +309,7 @@ def main(**kwargs):
             print(f"Frozen: {name} | Shape: {param.shape} | Parameters: {param.numel()}")
     print(f"\nTotal Trainable Parameters: {total_trainable}")
     # Start the training process
-    results = train_con_gen( #TODO: commu specific, modify this function
+    results = train_con_gen(
         model,
         train_dataloader,
         eval_dataloader,
@@ -345,8 +322,8 @@ def main(**kwargs):
         train_config,
         fsdp_config if train_config.enable_fsdp else None,
         ddp_config if train_config.enable_ddp else None,
-        local_rank if (train_config.enable_fsdp or train_config.enable_ddp) else None, #TODO: change this and train_utils
-        rank if (train_config.enable_fsdp or train_config.enable_ddp) else None,#TODO: change this and train_utils
+        local_rank if (train_config.enable_fsdp or train_config.enable_ddp) else None, 
+        rank if (train_config.enable_fsdp or train_config.enable_ddp) else None,
         wandb_run,
     )
     if not train_config.enable_fsdp or rank==0:
