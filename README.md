@@ -23,8 +23,22 @@ Download the pre-trained checkpoints from the following link:
 
 ## Finetuning
 
-### 1. Uncondtional Music Generation 
-
+### 1. Unconditional Music Generation 
+```bash
+torchrun --nproc_per_node 1 recipes/inference/custom_music_generation/unconditional_music_generation.py \
+  --csv_file /PATH/TO/CSV \
+  --top_p 0.95 \
+  --temperature 0.9 \
+  --model_config_path src/llama_recipes/configs/model_config.json \
+  --ckpt_dir /PATH/TO/PRETRAINED/CHECKPOINT \
+  --finetuned_PEFT_weight_path /PATH/TO/PEFT/WEIGHT \
+  --tokenizer_path tokenizer.model \
+  --max_seq_len 512 \
+  --max_gen_len 512 \
+  --max_batch_size 6 \
+  --num_test_data 20 \
+  --prompt_len 50
+```
 ### 2. Condtional Music Generation and Music Infilling 
 
 ### 3. Music Classification
