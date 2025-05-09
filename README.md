@@ -24,11 +24,41 @@ Download the pre-trained checkpoints from the following link:
 - [Conditional Generation Checkpoint (Commu)](https://TODO)
 
 ## Finetuning
-
+If you modify any configuration files in the `src/llama_recipes` directory, remember to reinstall the package.
+```bash
+pip install src/llama_recipes/transformers_minimal/.
+```
 ### 1. Unconditional Music Generation 
-Data Preprocessing:
-Finetuning: 
-Inferencing: 
+#### Data Preprocessing: 
+#### Update the dataset configuration:
+Edit the `lakhmidi_dataset` class in `src/llama_recipes/configs/datasets.py`. Set the correct paths for `data_dir` and `csv_file` to match your dataset location. Then reinstall the package: `pip install src/llama_recipes/transformers_minimal/.`.
+
+#### Finetuning: 
+```bash
+torchrun --nnodes 1 --nproc_per_node 1 recipes/finetuning/real_finetuning_uncon_gen.py \
+  --lr 3e-4 \
+  --val_batch_size 2 \
+  --run_validation True \
+  --validation_interval 10 \
+  --save_metrics True \
+  --dist_checkpoint_root_folder checkpoints/finetuned_checkpoints/ATEPP_bach_uncon_gen \
+  --dist_checkpoint_folder ddp \
+  --trained_checkpoint_path /PATH/TO/PRETRAINED/CHECKPOINT \
+  --pure_bf16 True \
+  --enable_ddp True \
+  --use_peft True \
+  --peft_method lora \
+  --quantization False \
+  --model_name ATEPP_bach \
+  --dataset lakhmidi_dataset \
+  --output_dir checkpoints/finetuned_checkpoints/ATEPP_bach_uncon_gen \
+  --batch_size_training 2 \
+  --context_length 2048 \
+  --num_epochs 300 \
+  --use_wandb False \
+  --gamma 0.99
+```
+#### Inferencing: 
 ```bash
 torchrun --nproc_per_node 1 recipes/inference/custom_music_generation/unconditional_music_generation.py \
   --csv_file /PATH/TO/CSV \
