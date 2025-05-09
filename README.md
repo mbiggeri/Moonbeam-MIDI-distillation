@@ -11,8 +11,15 @@ Moonbeam is a transformer-based foundation model for symbolic music, pretrained 
 ## Instructions
 
 ### 1. Install Dependencies
+```bash
+conda create --name moonbeam_test python=3.12
+pip install . 
+pip install src/llama_recipes/transformers_minimal/.
+```
 
 ### 2. Download Checkpoints 
+Download the pre-trained checkpoints from the following link:
+- [Checkpoint](https://TODO)
 
 ## Finetuning
 
