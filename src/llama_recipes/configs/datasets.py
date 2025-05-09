@@ -38,31 +38,31 @@ class lakhmidi_dataset:
     dataset: str = "lakhmidi_dataset"
     train_split: str = "train"
     test_split: str = "test"
-    data_dir: str = "/data/scratch/acw753/lakhmidi_processed"
-    csv_file: str = "/data/scratch/acw753/lakhmidi_processed/train_test_split.csv"
+    data_dir: str = "/PATH/TO/DATA/DIR"
+    csv_file: str = "/PATH/TO/CSV"
 
 @dataclass
 class merge_dataset:
     dataset: str = "merge_dataset"
     train_split: str = "train"
     test_split: str = "test"
-    data_dir: str = "/data/scratch/acw753/processed_midi_onset_4099_dur_4099"
-    csv_file: str = "/data/scratch/acw753/processed_midi_onset_4099_dur_4099/merged_train_test_split.csv"
+    data_dir: str = "/PATH/TO/DATA/DIR"
+    csv_file: str = "/PATH/TO/CSV"
 
 @dataclass
 class emophia_con_gen_dataset:
     dataset: str = "emophia_con_gen_dataset"
     train_split: str = "train"
     test_split: str = "test"
-    data_dir: str = "/data/scratch/acw753/finetune/EMOPIA_1.0_1078_clips_con_gen"
-    csv_file: str = "/data/scratch/acw753/finetune/EMOPIA_1.0_1078_clips_con_gen/train_test_split.csv"
+    data_dir: str = "/PATH/TO/DATA/DIR"
+    csv_file: str = "/PATH/TO/CSV"
 
 @dataclass
 class commu_con_gen_dataset:
     dataset: str = "commu_con_gen_dataset"
     train_split: str = "train"
     test_split: str = "val"
-    data_dir: str = "/data/scratch/acw753/finetune/commu_con_gen"
-    csv_file: str = "/data/scratch/acw753/finetune/commu_con_gen/train_test_split.csv"
-    additional_token_dict_path: str = "/data/scratch/acw753/datasets/commu/commu_midi/indexed_tokens_dict.json"
+    data_dir: str = "/PATH/TO/DATA/DIR"
+    csv_file: str = "/PATH/TO/CSV"
+    additional_token_dict_path: str = "/PATH/TO/JSON"
     
