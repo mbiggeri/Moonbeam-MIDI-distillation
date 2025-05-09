@@ -25,3 +25,4 @@ music21
 mido
 fairscale
 peft==0.10.0
+wandb
