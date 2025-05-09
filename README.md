@@ -30,8 +30,20 @@ pip install src/llama_recipes/transformers_minimal/.
 ```
 ### 1. Unconditional Music Generation 
 #### Data Preprocessing: 
+Download your dataset to `/PATH/TO/MIDI/FOLDER`. The below script will recursively find all the midi data; preprocess them; and randomly select 90% as training data and 10% as test data. If your dataset includes a predefined train/test split file, specify its path using the `--train_test_split_file` flag. The data will then be split according to the predefined split file.
+```bash
+python data_preprocess.py \
+  --dataset_name /DATASET/NAME \
+  --dataset_folder /PATH/TO/MIDI/FOLDER \
+  --output_folder /PATH/TO/PREPROCESSED/DATA \
+  --model_config src/llama_recipes/configs/model_config.json \
+  --train_test_split_file None \
+  --train_ratio 0.9 \
+  --ts_threshold None
+```
+
 #### Update the dataset configuration:
-Edit the `lakhmidi_dataset` class in `src/llama_recipes/configs/datasets.py`. Set the correct paths for `data_dir` and `csv_file` to match your dataset location. Then reinstall the package: `pip install src/llama_recipes/transformers_minimal/.`.
+Edit the `lakhmidi_dataset` class in `src/llama_recipes/configs/datasets.py`. Set the correct paths for `data_dir` and `csv_file` to match your dataset location (`/PATH/TO/PREPROCESSED/DATA`). Then reinstall the package: `pip install src/llama_recipes/transformers_minimal/.`.
 
 #### Finetuning: 
 ```bash
