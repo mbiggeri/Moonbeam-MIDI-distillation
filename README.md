@@ -19,11 +19,16 @@ pip install src/llama_recipes/transformers_minimal/.
 
 ### 2. Download Checkpoints 
 Download the pre-trained checkpoints from the following link:
-- [Checkpoint](https://TODO)
+- [Pre-trained Checkpoint](https://TODO)
+- [Unconditional Generation Checkpoint (ATEPP-Bach)](https://TODO)
+- [Conditional Generation Checkpoint (Commu)](https://TODO)
 
 ## Finetuning
 
 ### 1. Unconditional Music Generation 
+Data Preprocessing:
+Finetuning: 
+Inferencing: 
 ```bash
 torchrun --nproc_per_node 1 recipes/inference/custom_music_generation/unconditional_music_generation.py \
   --csv_file /PATH/TO/CSV \
@@ -39,10 +44,23 @@ torchrun --nproc_per_node 1 recipes/inference/custom_music_generation/unconditio
   --num_test_data 20 \
   --prompt_len 50
 ```
-### 2. Condtional Music Generation and Music Infilling 
+### 2. Conditional Music Generation and Music Infilling 
+Switch to the branch for conditional music generation and music infilling: 
+```bash
+git checkout conditional_gen_commu
+```
+Data Preprocessing:
+Finetuning: 
+Inferencing:
 
 ### 3. Music Classification
-
+Switch to the branch for music classification: 
+```bash
+git checkout finetune_player_classification
+```
+Data Preprocessing:
+Finetuning: 
+Inferencing:
 ## License
 
 ## Bibtex
