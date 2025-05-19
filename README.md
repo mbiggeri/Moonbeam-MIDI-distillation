@@ -102,8 +102,7 @@ python data_preprocess.py \
   --train_ratio None \
   --ts_threshold None
 ```
-  
-Finetuning: 
+
 Inferencing:
 ```bash
 torchrun --nproc_per_node 1 recipes/inference/custom_music_generation/conditional_music_generation_batch.py \
@@ -120,6 +119,31 @@ torchrun --nproc_per_node 1 recipes/inference/custom_music_generation/conditiona
   --max_batch_size 4 \
   --if_add_chords_in_transformer True \
   --if_add_metadata_in_transformer True
+```
+
+Finetuning: 
+```bash
+torchrun --nnodes 1 --nproc_per_node 1 recipes/finetuning/real_finetuning_con_gen.py \
+  --lr 3e-4 \
+  --val_batch_size 15 \
+  --run_validation True \
+  --validation_interval 120 \
+  --save_metrics True \
+  --dist_checkpoint_root_folder /PATH/TO/OUTPUT/FOLDER \
+  --dist_checkpoint_folder ddp \
+  --trained_checkpoint_path /PATH/TO/PRETRAINED/CHECKPOINT \
+  --pure_bf16 True \
+  --enable_ddp True \
+  --use_peft True \
+  --peft_method lora \
+  --quantization False \
+  --model_name commu_con_gen \
+  --dataset commu_con_gen_dataset \
+  --output_dir /PATH/TO/OUTPUT/FOLDER \
+  --batch_size_training 15 \
+  --context_length 848 \
+  --num_epochs 300 \
+  --use_wandb True
 ```
 
 ### 3. Music Classification
