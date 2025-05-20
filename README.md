@@ -87,11 +87,11 @@ torchrun --nproc_per_node 1 recipes/inference/custom_music_generation/unconditio
   --prompt_len 50
 ```
 ### 2. Conditional Music Generation and Music Infilling 
-Switch to the branch for conditional music generation and music infilling: 
+#### Switch to the branch for conditional music generation and music infilling: 
 ```bash
 git checkout conditional_gen_commu
 ```
-Data Preprocessing:
+#### Data Preprocessing:
 ```bash
 python data_preprocess.py \
   --dataset_name commu_con_gen \
@@ -103,7 +103,7 @@ python data_preprocess.py \
   --ts_threshold None
 ```
 
-Inferencing:
+#### Inferencing:
 ```bash
 torchrun --nproc_per_node 1 recipes/inference/custom_music_generation/conditional_music_generation_batch.py \
   --csv_file /PATH/TO/COMMU/META/CSV \
@@ -121,7 +121,7 @@ torchrun --nproc_per_node 1 recipes/inference/custom_music_generation/conditiona
   --if_add_metadata_in_transformer True
 ```
 
-Finetuning: 
+#### Finetuning: 
 ```bash
 torchrun --nnodes 1 --nproc_per_node 1 recipes/finetuning/real_finetuning_con_gen.py \
   --lr 3e-4 \
@@ -147,12 +147,11 @@ torchrun --nnodes 1 --nproc_per_node 1 recipes/finetuning/real_finetuning_con_ge
 ```
 
 ### 3. Music Classification
-Switch to the branch for music classification: 
+#### Switch to the branch for music classification: 
 ```bash
 git checkout finetune_player_classification
 ```
-Data Preprocessing:
-## Dataset Preprocessing
+#### Data Preprocessing:
 
 To preprocess datasets for music classification, run `data_preprocess.py` with the appropriate dataset configuration as shown below
 
@@ -163,7 +162,7 @@ To preprocess datasets for music classification, run `data_preprocess.py` with t
 | `emopia`           | `datasets/classification/emopia2.2/midis`         | `processed_datasets/classification/emopia2.2_1071_clips` | `datasets/classification/emopia2.2/split`         |
 | `Giant_Piano_MIDI` | `datasets/classification/gpm30/surname_checked_midis` | `processed_datasets/classification/gpm30`         | `datasets/classification/gpm30/gpm30_finetune.csv` |
 
-**Example for Giant_Piano_MIDI**:
+#### Example for Giant_Piano_MIDI:
 
 ```bash
 python data_preprocess.py \
@@ -175,7 +174,52 @@ python data_preprocess.py \
   --train_ratio 1 \
   --ts_threshold None
 ```
-Finetuning: 
+#### Finetuning:
+
+To finetune a music classification model, update the following configuration files based on the dataset-specific parameters in the table below:
+
+| Dataset Name       | Sliding Window Length | Finetuning Sequence Length | LoRA Target Modules | Learning Rate | Number of Classes |
+|--------------------|-----------------------|----------------------------|---------------------|---------------|-------------------|
+| `pijama30`         | 1200                  | 1203                       | q, k, v, o          | 3.00E-04      | 30                |
+| `pianist8`         | 900                   | 903                        | q, k, v, o          | 1.60E-04      | 8                 |
+| `emopia`           | 130                   | 133                        | q, k                | 2.00E-04      | 4                 |
+| `Giant_Piano_MIDI` | 1200                  | 1203                       | q, k, v, o          | 2.40E-04      | 30                |
+
+#### Configuration Files to Update:
+- `src/llama_recipes/configs/player_classification_config.json`: Set `num_classes` to the "Number of Classes" from the table.
+- `src/llama_recipes/configs/dataset.py` (in `player_classification_dataset` class):
+  - Set `seq_len` to the "Sliding Window Length" from the table.
+  - Set `data_dir` to the "Output Folder" from the preprocessing table.
+  - Set `csv_file` to the "Train-Test Split File" from the preprocessing table.
+- `src/llama_recipes/configs/peft.py`: Set `target_modules` to the "LoRA Target Modules" from the table.
+
+#### Run the finetuning script with the appropriate dataset parameters:
+```bash
+torchrun --nnodes 1 --nproc_per_node 1 recipes/finetuning/real_finetuning_player_classification.py \
+  --lr <LR> \
+  --val_batch_size 22 \
+  --run_validation True \
+  --validation_interval 399 \
+  --save_metrics True \
+  --dist_checkpoint_root_folder /PATH/TO/OUTPUT/FOLDER \
+  --dist_checkpoint_folder ddp \
+  --trained_checkpoint_path /PATH/TO/PRETRAINED/CHECKPOINT \
+  --pure_bf16 True \
+  --enable_ddp True \
+  --use_peft True \
+  --peft_method lora \
+  --quantization False \
+  --model_name player_classification \
+  --dataset player_classification \
+  --output_dir /PATH/TO/OUTPUT/FOLDER \
+  --batch_size_training 5 \
+  --context_length <Finetuning Sequence Length in Above Table> \
+  --num_epochs 300 \
+  --use_wandb True \
+  --use_cache False \
+  --individual_eval True
+```
+
 ## License
 
 ## Bibtex
