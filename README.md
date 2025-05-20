@@ -152,8 +152,30 @@ Switch to the branch for music classification:
 git checkout finetune_player_classification
 ```
 Data Preprocessing:
+## Dataset Preprocessing
+
+To preprocess datasets for music classification, run `data_preprocess.py` with the appropriate dataset configuration as shown below
+
+| Dataset Name       | Dataset Folder                                      | Output Folder                                      | Train-Test Split File                              |
+|--------------------|----------------------------------------------------|----------------------------------------------------|----------------------------------------------------|
+| `pijama30`         | `datasets/classification/pijama30`                 | `processed_datasets/classification/pijama30_album_split_0` | `datasets/classification/pijama30/pijama30_finetune.csv` |
+| `pianist8`        | `datasets/classification/pianist8`                | `processed_datasets/classification/pianist8`       | `dummy.csv`                                        |
+| `emopia`           | `datasets/classification/emopia2.2/midis`         | `processed_datasets/classification/emopia2.2_1071_clips` | `datasets/classification/emopia2.2/split`         |
+| `Giant_Piano_MIDI` | `datasets/classification/gpm30/surname_checked_midis` | `processed_datasets/classification/gpm30`         | `datasets/classification/gpm30/gpm30_finetune.csv` |
+
+**Example for Giant_Piano_MIDI**:
+
+```bash
+python data_preprocess.py \
+  --dataset_name Giant_Piano_MIDI \
+  --dataset_folder datasets/classification/gpm30/surname_checked_midis \
+  --output_folder processed_datasets/classification/gpm30 \
+  --model_config src/llama_recipes/configs/model_config.json \
+  --train_test_split_file datasets/classification/gpm30/gpm30_finetune.csv \
+  --train_ratio 1 \
+  --ts_threshold None
+```
 Finetuning: 
-Inferencing:
 ## License
 
 ## Bibtex
