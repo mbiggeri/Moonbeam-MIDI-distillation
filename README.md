@@ -1,6 +1,6 @@
 # Moonbeam: A MIDI Foundation Model Using Both Absolute and Relative Music Attributes
 
-[Paper Link](https://TODO)  
+[Paper Link](https://arxiv.org/pdf/2505.15559)  
 [Demo Website](https://TODO)  
 [Checkpoint](https://TODO) 
 
@@ -219,7 +219,16 @@ torchrun --nnodes 1 --nproc_per_node 1 recipes/finetuning/real_finetuning_player
   --use_cache False \
   --individual_eval True
 ```
-
 ## License
 
+This project is licensed under the [Apache License 2.0](LICENSE).
+
 ## Bibtex
+
+@article{guo2025moonbeam,
+  title={Moonbeam: A MIDI Foundation Model Using Both Absolute and Relative Music Attributes},
+  author={Guo, Zixun and Dixon, Simon},
+  journal={arXiv preprint arXiv:2505.15559},
+  year={2025},
+  url={https://arxiv.org/abs/2505.15559}
+}
