@@ -225,6 +225,7 @@ This project is licensed under the [Apache License 2.0](LICENSE).
 
 ## Bibtex
 
+```bibtex
 @article{guo2025moonbeam,
   title={Moonbeam: A MIDI Foundation Model Using Both Absolute and Relative Music Attributes},
   author={Guo, Zixun and Dixon, Simon},
