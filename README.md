@@ -1,8 +1,8 @@
 # Moonbeam: A MIDI Foundation Model Using Both Absolute and Relative Music Attributes
 
 [Paper Link](https://arxiv.org/pdf/2505.15559)  
-[Demo Website](https://TODO)  
-[Checkpoint](https://TODO) 
+[Demo Website](https://aim-qmul.github.io/moonbeam-midi-foundation-model/)  
+[Checkpoint](https://huggingface.co/guozixunnicolas/moonbeam-midi-foundation-model) 
 
 ## Introduction
 
@@ -19,7 +19,7 @@ pip install src/llama_recipes/transformers_minimal/.
 
 ### 2. Download Checkpoints 
 Download the pre-trained checkpoints from the following link:
-- [Pre-trained Checkpoint](https://TODO)
+- [Pre-trained Checkpoint](https://huggingface.co/guozixunnicolas/moonbeam-midi-foundation-model)
 - [Unconditional Generation Checkpoint (ATEPP-Bach)](https://TODO)
 - [Conditional Generation Checkpoint (Commu)](https://TODO)
 
