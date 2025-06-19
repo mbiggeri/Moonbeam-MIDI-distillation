@@ -19,7 +19,8 @@ from peft import get_peft_model, prepare_model_for_kbit_training
 from llama_recipes.datasets.music_tokenizer import MusicTokenizer
 from llama_recipes.datasets.lakh_dataset import LakhDataset
 from llama_recipes.utils.config_utils import get_distillation_configs
-from llama_recipes.utils.train_utils import set_seed, train_distillation
+from llama_recipes.utils.config_utils import set_seed  # Importa set_seed dal percorso corretto
+from llama_recipes.utils.train_utils import train_distillation
 
 # Ignora gli avvisi di performance di UserWarning, comuni durante la distillazione
 import warnings

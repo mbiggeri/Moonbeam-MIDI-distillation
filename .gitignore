@@ -12,3 +12,4 @@ src/llama_recipes/transformers_minimal/src/transformers/models/encoder_decoder/_
 src/llama_recipes/transformers_minimal/src/transformers/quantizers/__pycache__/
 src/llama_recipes/transformers_minimal/src/transformers/models/auto/__pycache__/
 src/llama_recipes/transformers_minimal/src/transformers.egg-info/
+.venv/
