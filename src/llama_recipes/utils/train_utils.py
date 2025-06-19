@@ -14,6 +14,7 @@ import contextlib
 import torch
 import torch.cuda.nccl as nccl
 import torch.distributed as dist
+import torch.nn.functional as F
 from torch.distributed.fsdp import StateDictType
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from tqdm import tqdm
@@ -67,6 +68,122 @@ def profile(cfg, local_rank=None):
         torch_profiler = contextlib.nullcontext()
         yield None
 
+# --- DISTILLAZIONE
+def distillation_loss_fn(student_logits, teacher_logits, labels, alpha, temperature):
+    """
+    Calcola la loss combinata per la distillazione.
+
+    Args:
+        student_logits (torch.Tensor): Logits prodotti dal modello student.
+        teacher_logits (torch.Tensor): Logits prodotti dal modello teacher.
+        labels (torch.Tensor): Etichette reali (ground truth).
+        alpha (float): Peso per bilanciare la soft loss e la hard loss.
+        temperature (float): Temperatura per ammorbidire le distribuzioni di probabilità.
+
+    Returns:
+        torch.Tensor: Loss totale di distillazione.
+        torch.Tensor: Hard loss (cross-entropy).
+    """
+    # 1. Hard Loss (con le etichette reali)
+    # Calcola la loss standard tra le previsioni dello student e le etichette corrette.
+    hard_loss = F.cross_entropy(student_logits.view(-1, student_logits.size(-1)), labels.view(-1), ignore_index=-100)
+
+    # 2. Soft Loss (con i logits del teacher)
+    # La KL Divergence misura la differenza tra le due distribuzioni di probabilità (teacher e student).
+    # La temperatura ammorbidisce le probabilità, consentendo di trasferire più "sfumature".
+    soft_teacher_targets = F.softmax(teacher_logits / temperature, dim=-1)
+    soft_student_log_probs = F.log_softmax(student_logits / temperature, dim=-1)
+    
+    # Moltiplichiamo per T^2 per mantenere la scala dei gradienti
+    soft_loss = (F.kl_div(soft_student_log_probs, soft_teacher_targets, reduction='batchmean') * (temperature ** 2))
+    
+    # 3. Loss combinata
+    # Media pesata delle due loss.
+    total_loss = alpha * soft_loss + (1.0 - alpha) * hard_loss
+    
+    return total_loss, hard_loss
+
+
+def train_distillation(student_model, teacher_model, train_dataloader, eval_dataloader, tokenizer, optimizer, scheduler, gradient_accumulation_steps, train_config):
+    """
+    Funzione principale per il ciclo di addestramento della distillazione.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    for epoch in range(train_config.num_epochs):
+        student_model.train()
+        total_loss = 0.0
+        
+        # Ciclo di addestramento
+        pbar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{train_config.num_epochs} [Training]")
+        for step, batch in enumerate(pbar):
+            # Sposta i dati sul dispositivo
+            batch = {k: v.to(device) for k, v in batch.items()}
+            labels = batch["labels"]
+            
+            # 1. Ottieni i logits dal teacher (in modalità no_grad)
+            with torch.no_grad():
+                teacher_outputs = teacher_model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
+                teacher_logits = teacher_outputs.logits
+
+            # 2. Ottieni i logits dallo student (il gradiente viene calcolato qui)
+            student_outputs = student_model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
+            student_logits = student_outputs.logits
+
+            # 3. Calcola la loss di distillazione
+            loss, hard_loss = distillation_loss_fn(
+                student_logits,
+                teacher_logits,
+                labels,
+                alpha=train_config.alpha,
+                temperature=train_config.temperature
+            )
+            
+            # Normalizza la loss per l'accumulo dei gradienti
+            loss = loss / gradient_accumulation_steps
+            
+            # 4. Backpropagation
+            loss.backward()
+
+            # Aggiorna i pesi ogni `gradient_accumulation_steps`
+            if (step + 1) % gradient_accumulation_steps == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+            
+            total_loss += loss.item()
+            pbar.set_postfix({"Loss": loss.item() * gradient_accumulation_steps, "Hard Loss": hard_loss.item()})
+
+        # Aggiorna lo scheduler
+        scheduler.step()
+        
+        # Ciclo di validazione
+        student_model.eval()
+        eval_loss = 0.0
+        with torch.no_grad():
+            pbar_eval = tqdm(eval_dataloader, desc=f"Epoch {epoch+1}/{train_config.num_epochs} [Validation]")
+            for batch in pbar_eval:
+                batch = {k: v.to(device) for k, v in batch.items()}
+                labels = batch["labels"]
+                
+                outputs = student_model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
+                # Per la validazione, usiamo solo la hard loss (cross-entropy)
+                loss = F.cross_entropy(outputs.logits.view(-1, outputs.logits.size(-1)), labels.view(-1), ignore_index=-100)
+                eval_loss += loss.item()
+                pbar_eval.set_postfix({"Eval Loss": loss.item()})
+        
+        avg_eval_loss = eval_loss / len(eval_dataloader)
+        print(f"Epoch {epoch+1} - Average Validation Loss: {avg_eval_loss}")
+
+        # Salva un checkpoint del modello
+        if train_config.save_model:
+            output_dir = os.path.join(train_config.output_dir, f"epoch_{epoch+1}")
+            os.makedirs(output_dir, exist_ok=True)
+            student_model.save_pretrained(output_dir)
+            tokenizer.save_pretrained(output_dir)
+            print(f"Modello salvato in {output_dir}")
+            
+    return {"final_validation_loss": avg_eval_loss}
+# -----------------
 
 def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_scheduler, starting_epoch, starting_step,gradient_accumulation_steps, train_config, fsdp_config=None, ddp_config=None, local_rank=None, rank=None, wandb_run=None):
     """

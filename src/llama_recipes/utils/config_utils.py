@@ -75,6 +75,28 @@ def generate_dataset_config(train_config, kwargs):
     return  dataset_config
 
 
+def get_distillation_configs(
+    # Aggiungi qui gli argomenti specifici della distillazione con valori di default
+    teacher_model_name: str="meta-llama/Llama-2-7b-hf",
+    alpha: float=0.5,
+    temperature: float=2.0,
+    **kwargs
+):
+    from llama_recipes.configs import train_config as TRAIN_CONFIG
+    from llama_recipes.configs import model_config as MODEL_CONFIG
+
+    # Aggiorna train_config con i parametri specifici della distillazione
+    TRAIN_CONFIG.teacher_model_name = teacher_model_name
+    TRAIN_CONFIG.alpha = alpha
+    TRAIN_CONFIG.temperature = temperature
+    
+    # Aggiorna le altre configurazioni come nella funzione `get_train_configs`
+    # (Questa è una versione semplificata, puoi estenderla se necessario)
+    model_configs = {k:v for k,v in MODEL_CONFIG.__dict__.items()}
+    
+    return model_configs, TRAIN_CONFIG, None, None, None
+
+
 def get_dataloader_kwargs(train_config, dataset, tokenizer, mode):
         kwargs = {}
         batch_size = train_config.batch_size_training if mode=="train" else train_config.val_batch_size
