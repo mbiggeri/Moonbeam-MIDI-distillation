@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 from llama_recipes.datasets.music_tokenizer import MusicTokenizer
 import traceback
 from tqdm import tqdm
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
 import multiprocessing
+from multiprocessing import Pool
 from collections import Counter
 import numpy as np
 from collections import defaultdict
@@ -14,7 +14,8 @@ import csv
 from sklearn.model_selection import train_test_split
 import pandas as pd
 
-# USAGE: python data_preprocess.py --dataset_folder "C:\Users\Michael\Desktop\MusicDatasets\Datasets\Moonbeam_Distillation\raw_midi_data" 
+# USAGE: 
+# python data_preprocess.py --dataset_folder "C:\Users\Michael\Desktop\MusicDatasets\Datasets\Moonbeam_Distillation\raw_midi_data" 
 # --output_folder "C:\Users\Michael\Desktop\MusicDatasets\Datasets\Moonbeam_Distillation\processed_data" 
 # --model_config "src/llama_recipes/configs/model_config.json" --train_ratio 0.9
 
@@ -170,6 +171,9 @@ def process_midi_file_v2(midi_file, split, onset_vocab_size, dur_vocab_size, out
     
     return processed_chunks if processed_chunks else None
 
+def process_midi_file_wrapper(args):
+    """Wrapper to unpack arguments for pool.imap_unordered."""
+    return process_midi_file_safe_v2(*args)
 
 # Main script execution
 if __name__ == '__main__':
@@ -224,32 +228,40 @@ if __name__ == '__main__':
         success_count = 0
         fail_count = 0
 
-        with ProcessPoolExecutor(max_workers=num_cores, initializer=init_tokenizer_worker, initargs=initializer_args) as executor:
-            # Sottometti tutti i task all'executor
-            futures = {
-                executor.submit(process_midi_file_safe_v2, midi_file, split, onset_vocab_size, dur_vocab_size, midi_output_folder, log_file, args.ts_threshold): midi_file 
-                for midi_file, split in zip(midi_files, splits)
-            }
-            
-            # Usa tqdm per creare la barra di avanzamento
-            pbar = tqdm(total=len(midi_files), desc="Processing MIDI files")
+        # Prepara gli argomenti per ogni task in una lista di tuple
+        tasks = [
+            (midi_file, split, onset_vocab_size, dur_vocab_size, midi_output_folder, log_file, args.ts_threshold)
+            for midi_file, split in zip(midi_files, splits)
+        ]
 
-            for future in as_completed(futures):
-                result = future.result()
-                
-                if result == [None] or result is None:
-                    fail_count += 1
-                else:
-                    success_count += 1
-                    for sublist in result:
-                        if sublist is not None:
-                            csv_writer.writerow([os.path.basename(sublist['file']), sublist['split'], sublist['length_token'], sublist['length_duration']])
-                
-                # Aggiorna la barra di avanzamento e i contatori
-                pbar.update(1)
-                pbar.set_postfix({'Success': success_count, 'Failed': fail_count})
+        with open(csv_file_path, 'w', newline='') as csvfile:
+            csv_writer = csv.writer(csvfile)
+            csv_writer.writerow(['file_base_name', 'split', 'length', 'duration'])
 
-            pbar.close()
+            success_count = 0
+            fail_count = 0
+
+            # Usa multiprocessing.Pool, che supporta maxtasksperchild nelle vecchie versioni di Python
+            with Pool(processes=num_cores, initializer=init_tokenizer_worker, initargs=initializer_args, maxtasksperchild=50) as pool:
+                
+                # pool.imap_unordered è l'equivalente di as_completed
+                # Applica la funzione wrapper a ogni set di argomenti nella lista 'tasks'
+                results_iterator = pool.imap_unordered(process_midi_file_wrapper, tasks)
+                
+                # Usa tqdm per creare la barra di avanzamento
+                pbar = tqdm(results_iterator, total=len(tasks), desc="Processing MIDI files")
+
+                for result in pbar:
+                    if result == [None] or result is None:
+                        fail_count += 1
+                    else:
+                        success_count += 1
+                        for sublist in result:
+                            if sublist is not None:
+                                csv_writer.writerow([os.path.basename(sublist['file']), sublist['split'], sublist['length_token'], sublist['length_duration']])
+                    
+                    # Aggiorna il postfisso della barra di avanzamento
+                    pbar.set_postfix({'Success': success_count, 'Failed': fail_count})
 
     processed_count = success_count
     total_files = len(midi_files)
