@@ -2,6 +2,9 @@
 # This software may be used and distributed according to the terms of the Llama 2 Community License Agreement.
 
 import inspect
+import random
+import numpy as np
+import torch
 from dataclasses import asdict
 
 import torch.distributed as dist
@@ -17,6 +20,20 @@ from transformers.data import DataCollatorForSeq2Seq
 from llama_recipes.configs import datasets, lora_config, llama_adapter_config, prefix_config, train_config
 from llama_recipes.data.sampler import LengthBasedBatchSampler, DistributedLengthBasedBatchSampler
 from llama_recipes.utils.dataset_utils import DATASET_PREPROC
+
+
+def set_seed(seed):
+    """
+    Sets the seed for reproducibility.
+
+    Args:
+        seed (int): The seed to set.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def update_config(config, **kwargs):
