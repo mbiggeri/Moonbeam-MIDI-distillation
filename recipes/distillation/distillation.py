@@ -13,7 +13,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import StepLR
-from transformers import AutoTokenizer, LlamaForCausalLM, LlamaConfig
+from transformers import AutoTokenizer, LlamaForCausalLM, LlamaConfig, LlamaTokenizerFast
 from peft import get_peft_model, prepare_model_for_kbit_training
 
 from llama_recipes.datasets.music_tokenizer import MusicTokenizer
@@ -45,7 +45,7 @@ def main(**kwargs):
 
     # Carica il tokenizer (lo stesso per teacher e student)
     # Assicura che la tokenizzazione sia consistente
-    tokenizer = MusicTokenizer()
+    tokenizer = LlamaTokenizerFast.from_pretrained(train_config.model_name)
     
     # ----------------------------------------------------------------------
     # 1. CARICAMENTO DEL MODELLO TEACHER
@@ -55,7 +55,7 @@ def main(**kwargs):
     teacher_model = LlamaForCausalLM.from_pretrained(
         train_config.model_name,
         return_dict=True,
-        load_in_8bit=True, # Usa la quantizzazione per ridurre l'uso della memoria
+        # load_in_8bit=True, # Usa la quantizzazione per ridurre l'uso della memoria
         device_map="auto",
         low_cpu_mem_usage=True,
     )
@@ -65,9 +65,10 @@ def main(**kwargs):
     # ----------------------------------------------------------------------
     # 2. CARICAMENTO DEL MODELLO STUDENT
     # ----------------------------------------------------------------------
-    student_config = LlamaConfig.from_pretrained(model_configs["student"])
-    
-    print(f"Caricamento del modello Student: {model_configs['student']}")
+    # Convertiamo l'oggetto SimpleNamespace in un dizionario e lo usiamo per inizializzare LlamaConfig
+    student_config = LlamaConfig(**model_configs)
+
+    print(f"Caricamento del modello Student da configurazione: {kwargs.get('model_config_file')}")
     student_model = LlamaForCausalLM(student_config)
 
     # Abilita il gradient checkpointing per risparmiare memoria
@@ -88,20 +89,17 @@ def main(**kwargs):
     # ----------------------------------------------------------------------
     # Utilizza il dataset specificato
     # Nota: Assicurati che i percorsi e i parametri del dataset siano corretti.
+    # In distillation.py - Chiamata corretta
     train_dataset = LakhDataset(
-        csv_path=train_config.csv_path,
-        data_path=train_config.data_path,
-        split="train",
+        dataset_config=train_config,
         tokenizer=tokenizer,
-        max_words=train_config.max_token_length,
+        partition="train"
     )
-    
+
     eval_dataset = LakhDataset(
-        csv_path=train_config.csv_path,
-        data_path=train_config.data_path,
-        split="validation",
+        dataset_config=train_config,
         tokenizer=tokenizer,
-        max_words=train_config.max_token_length,
+        partition="validation"
     )
 
     train_dataloader = DataLoader(

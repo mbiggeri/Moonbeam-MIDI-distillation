@@ -76,7 +76,7 @@ def get_distillation_configs(
     try:
         with open(student_model_config_path, "r") as f:
             # Carica il JSON e lo converte in un oggetto accessibile con il punto (es. model_configs.hidden_size)
-            model_configs = json.load(f, object_hook=lambda d: SimpleNamespace(**d))
+            model_configs = json.load(f)
     except FileNotFoundError:
         raise FileNotFoundError(f"Il file di configurazione specificato non è stato trovato: {student_model_config_path}")
     # --- FINE LOGICA DI CARICAMENTO ---

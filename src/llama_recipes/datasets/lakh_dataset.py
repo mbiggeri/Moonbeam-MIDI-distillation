@@ -15,7 +15,7 @@ import os
 
 class LakhDataset(Dataset):
     def __init__(self, dataset_config, tokenizer, partition="train"):
-        assert partition=="train" or partition=="test"
+        assert partition=="train" or partition=="test" or partition=="validation"
         self.data_dir = dataset_config.data_dir
         split_data = pd.read_csv(dataset_config.csv_file)
         file_basenames = split_data['file_base_name'].values

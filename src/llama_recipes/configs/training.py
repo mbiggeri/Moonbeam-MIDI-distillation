@@ -16,6 +16,8 @@ class train_config:
     batch_size_training: int=4
     batching_strategy: str="packing" #alternative: padding
     context_length: int=1024
+    max_words: int = 1024
+    use_gradient_checkpointing: bool=False
     gradient_accumulation_steps: int=1
     gradient_clipping: bool = False
     gradient_clipping_threshold: float = 1.0
@@ -34,6 +36,8 @@ class train_config:
     peft_method: str = "lora" # None, llama_adapter (Caution: llama_adapter is currently not supported with FSDP)
     use_peft: bool=False
     output_dir: str = "PATH/to/save/PEFT/model"
+    csv_file: str = None
+    data_dir: str = None
     freeze_layers: bool = False
     num_freeze_layers: int = 1
     quantization: bool = False
