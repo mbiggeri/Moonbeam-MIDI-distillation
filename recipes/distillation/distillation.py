@@ -163,6 +163,11 @@ def main(**kwargs):
     teacher_model = teacher_llama.model
     teacher_model.eval()
     print("Modello Teacher caricato con successo.")
+    print("-" * 50)
+    print("Dettagli del Modello Student:")
+    print(f"  -> Parametri: {sum(p.numel() for p in teacher_model.parameters()) / 1_000_000:.2f} Milioni")
+    print(f"  -> Precisione: {next(teacher_model.parameters()).dtype}")
+    print("-" * 50)
 
     # --- CARICAMENTO TOKENIZER E MODELLO STUDENT ---
     tokenizer = teacher_llama.tokenizer

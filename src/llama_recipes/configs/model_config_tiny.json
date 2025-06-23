@@ -60,7 +60,7 @@
     "method": "FME",
     "base": 131
   },
-  "decode_vocab_size": 8487,
+  "decode_vocab_size": 8512,
   "decoder": {
     "hidden_size": 512,
     "num_hidden_layers": 2,
