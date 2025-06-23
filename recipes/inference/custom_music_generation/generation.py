@@ -85,8 +85,10 @@ class MusicLlama:
   
         if is_xpu_available():
             model.to("xpu")
-        else:
+        elif torch.cuda.is_available():
             model.to("cuda")
+        else:
+            model.to("cpu")
         model.eval()
 
         tokenizer = MusicTokenizer(timeshift_vocab_size = llama_config.onset_vocab_size, dur_vocab_size = llama_config.dur_vocab_size, octave_vocab_size = llama_config.octave_vocab_size, pitch_class_vocab_size = llama_config.pitch_class_vocab_size, instrument_vocab_size = llama_config.instrument_vocab_size, velocity_vocab_size = llama_config.velocity_vocab_size)
@@ -95,8 +97,10 @@ class MusicLlama:
             torch.set_default_tensor_type(torch.cuda.BFloat16Tensor)
             model = model.to(torch.bfloat16)  # Explicitly cast the entire model to BF16 precision.
             print("model precision set to BF16")
-        else:
+        elif torch.cuda.is_available():
             torch.set_default_tensor_type(torch.cuda.HalfTensor) 
+        else:
+            pass  # If no GPU is available, keep the default tensor type.
 
         print(f"Loaded in {time.time() - start_time:.2f} seconds")
 
