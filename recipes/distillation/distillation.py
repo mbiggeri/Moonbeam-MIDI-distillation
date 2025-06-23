@@ -172,6 +172,12 @@ def main(**kwargs):
     # *** NUOVA LOGICA DI CARICAMENTO DELLO STUDENT ***
     # 1. Creiamo un oggetto LlamaConfig dal dizionario 'model_configs' 
     #    che la tua funzione 'get_distillation_configs' ha già caricato dal tuo file .json custom.
+    print("\n--- DEBUG: VERIFICA CONFIGURAZIONE CARICATA ---")
+    import json
+    print("Dizionario 'model_configs' caricato da get_distillation_configs:")
+    print(json.dumps(model_configs, indent=2))
+    print("--------------------------------------------------\n")
+    
     student_config = LlamaConfig(**model_configs)
 
     # 2. Usiamo LlamaForCausalLM.from_pretrained per inizializzare un NUOVO modello.
