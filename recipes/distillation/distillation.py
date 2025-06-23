@@ -169,21 +169,28 @@ def main(**kwargs):
     
     print(f"Creazione del modello Student da configurazione: {kwargs.get('model_config_file')}")
     
-    # *** MODIFICA NECESSARIA PER LA QUANTIZZAZIONE ***
-    # Invece di creare il modello da una config vuota, usiamo from_pretrained.
-    # Questo permette di passare il 'quantization_config' che la tua funzione già crea.
-    # Se quantization_config è None, il modello viene caricato normalmente.
-    student_config_dir = os.path.dirname(kwargs.get('model_config_file'))
+    # *** NUOVA LOGICA DI CARICAMENTO DELLO STUDENT ***
+    # 1. Creiamo un oggetto LlamaConfig dal dizionario 'model_configs' 
+    #    che la tua funzione 'get_distillation_configs' ha già caricato dal tuo file .json custom.
+    student_config = LlamaConfig(**model_configs)
+
+    # 2. Usiamo LlamaForCausalLM.from_pretrained per inizializzare un NUOVO modello.
+    #    - Passando `config=student_config`, gli diciamo di usare la nostra configurazione custom.
+    #    - Passando `pretrained_model_name_or_path=None` e `state_dict={}`, gli diciamo
+    #      esplicitamente di non caricare nessun peso, ma di creare il modello da zero.
+    #    Questo metodo ci permette di passare anche il `quantization_config` se presente.
     student_model = LlamaForCausalLM.from_pretrained(
-        student_config_dir, # Legge il config.json da questa cartella
-        quantization_config=quantization_config # APPLICA LA QUANTIZZAZIONE SE ATTIVATA
+        pretrained_model_name_or_path=None,         # Inizializza da zero
+        config=student_config,                      # Usa la tua config custom (da tiny_config.json)
+        quantization_config=quantization_config,    # Applica la quantizzazione se attivata
+        state_dict={},                              # Assicura che non vengano caricati pesi
     )
     
     if quantization_config:
-        print("Quantizzazione attivata. Preparazione del modello per il training k-bit.")
-        student_model = prepare_model_for_kbit_training(student_model)
+        print("Quantizzazione attivata. Il modello student è stato creato con layer a 4/8 bit.")
+        # La preparazione non è più necessaria qui perché la quantizzazione è già avvenuta
     else:
-        print("Nessuna quantizzazione specificata. Modello caricato con precisione standard.")
+        print("Nessuna quantizzazione specificata. Modello student creato con precisione standard.")
         student_model.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
 
     print("Modello Student creato con successo.")
@@ -225,29 +232,3 @@ def main(**kwargs):
 
 if __name__ == "__main__":
     fire.Fire(main)
-    
-'''
-python distillation.py \
-    # --- Percorsi Obbligatori (gli stessi di prima) ---
-    --model_config_file="/percorso/del/tuo/progetto/configs/student_model_config.json" \
-    --teacher_model_checkpoint="/percorso/del/tuo/progetto/checkpoints/teacher_model/checkpoint.pt" \
-    --teacher_model_config="/percorso/del/tuo/progetto/checkpoints/teacher_model/config.json" \
-    --tokenizer_path="/percorso/del/tuo/progetto/tokenizer/" \
-    --output_dir="/percorso/del/tuo/progetto/distilled_models/" \
-    \
-    # --- PER ATTIVARE LA QUANTIZZAZIONE A 4-BIT (secondo la tua funzione get_quantization_config) ---
-    --quantization=True \
-    \
-    # --- Parametri di Addestramento e Distillazione (gli stessi di prima) ---
-    --num_epochs=3 \
-    --lr=0.0002 \
-    --batch_size_training=4 \
-    --gradient_accumulation_steps=8 \
-    --alpha=0.5 \
-    --temperature=2.0 \
-    \
-    # --- Parametri del Dataset (gli stessi di prima) ---
-    --dataset="lakh_dataset" \
-    --csv_dataset_path="/percorso/del/tuo/progetto/data/dataset_split.csv" \
-    --file_column_name="file_path"
-'''
