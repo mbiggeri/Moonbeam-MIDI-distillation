@@ -19,6 +19,7 @@ from torch.distributed.fsdp import StateDictType
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from tqdm import tqdm
 from transformers import LlamaTokenizer
+from transformers import BitsAndBytesConfig
 import json
 
 
@@ -1350,3 +1351,20 @@ def save_to_json(output_filename, train_step_loss, train_epoch_loss, train_step_
     }
     with open(output_filename, "w") as f:
         json.dump(metrics_data, f)
+
+def get_quantization_config(train_config):
+    """
+    Crea e restituisce una configurazione per la quantizzazione a 4 bit
+    se l'opzione è attivata nella configurazione di training.
+    """
+    if train_config.quantization:
+        # Configurazione standard per la quantizzazione NF4 a 4 bit
+        return BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+        )
+    else:
+        # Se la quantizzazione non è richiesta, non restituisce alcuna configurazione
+        return None

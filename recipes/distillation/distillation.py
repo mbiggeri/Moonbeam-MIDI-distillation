@@ -31,9 +31,13 @@ def main(**kwargs):
     (
         model_configs,
         train_config,
-        _, # fsdp_config
-        _, # ddp_config
-        _, # dataset_config
+        fsdp_config,
+        lora_config,
+        llama_adapter_config,
+        prefix_config,
+        quantization_config,
+        dataset_config,
+        wandb_config,
     ) = get_distillation_configs(**kwargs)
 
     # Imposta la seed per la riproducibilità
@@ -46,10 +50,10 @@ def main(**kwargs):
     # ----------------------------------------------------------------------
     # 1. CARICAMENTO DEL MODELLO TEACHER
     # ----------------------------------------------------------------------
-    print(f"Caricamento del modello Teacher: {train_config.teacher_model_name}")
+    print(f"Caricamento del modello Teacher: {train_config.model_name}")
     # Il teacher è caricato in modalità di valutazione e non richiede calcolo del gradiente
     teacher_model = LlamaForCausalLM.from_pretrained(
-        train_config.teacher_model_name,
+        train_config.model_name,
         return_dict=True,
         load_in_8bit=True, # Usa la quantizzazione per ridurre l'uso della memoria
         device_map="auto",
