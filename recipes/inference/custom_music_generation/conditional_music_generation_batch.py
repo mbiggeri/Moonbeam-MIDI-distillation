@@ -9,7 +9,7 @@ import numpy as np
 import os
 import re
 # from llama import Dialog, Llama
-from generation import MusicLlama
+from generation_conditioned import MusicLlamaConditional
 import random
 import ast
 import json
@@ -70,7 +70,6 @@ def main(
     max_gen_len: Optional[int] = None,
     finetuned_PEFT_weight_path: Optional[str] = None,
     additional_token_dict_path: Optional[str] = None,
-    chord_dict_path: Optional[str] = None
 ):
     """
     Examples to run with the models finetuned for chat. Prompts correspond of chat
@@ -94,12 +93,15 @@ def main(
 
     with open(additional_token_dict_path, "r") as f:
         additional_token_dict = json.load(f)
+    
+    with open(model_config_path, "r") as f:
+        chord_dict = json.load(f)['chord_dict']
 
     save_folder = os.path.join(finetuned_PEFT_weight_path, os.path.basename(ckpt_dir), f"temperature_{temperature}_top_p_{top_p}")
     os.makedirs(save_folder, exist_ok=True)
 
     additional_token_dict_inv = {v: k for k, v in additional_token_dict.items()}
-    generator = MusicLlama.build_commu_con_gen(
+    generator = MusicLlamaConditional.build_commu_con_gen(
         ckpt_dir=ckpt_dir,
         model_config_path = model_config_path,
         tokenizer_path=tokenizer_path,
@@ -149,7 +151,7 @@ def main(
                 top_p=top_p,
                 condition_token_lengths = condition_token_lengths, #remove sos token and emotion token
                 chord_token_indices = chord_token_indices,
-                chord_dict_path = chord_dict_path, 
+                chord_dict = chord_dict, 
                 if_return_chords = False
             )
             #save midi
@@ -258,7 +260,7 @@ def main(
             top_p=top_p,
             condition_token_lengths=condition_token_lengths,
             chord_token_indices=chord_token_indices,
-            chord_dict_path=chord_dict_path, 
+            chord_dict=chord_dict, 
             if_return_chords=False
         )
 

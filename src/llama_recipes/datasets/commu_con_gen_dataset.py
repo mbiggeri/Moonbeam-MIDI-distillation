@@ -53,44 +53,4 @@ class Commu_Con_Gen_Datasets(Dataset):
             "attention_mask":[] #Mask to be calculated dynamically during concatenation
         }
 
-
-if __name__ == "__main__":
-    from dataclasses import dataclass
-    @dataclass
-    class commu_con_gen_dataset:
-        dataset: str = "commu_con_gen_dataset"
-        train_split: str = "train"
-        test_split: str = "test"
-        data_dir: str = "/data/scratch/acw753/finetune/commu_con_gen"
-        csv_file: str = "/data/scratch/acw753/finetune/commu_con_gen/train_test_split.csv"
-        additional_token_dict_path: str = "/data/scratch/acw753/datasets/commu/commu_midi/indexed_tokens_dict.json"
-        if_add_chords_in_transformer: bool = True
-        if_add_metadata_in_transformer: bool = False
-    from music_tokenizer import MusicTokenizer
-    tokenizer = MusicTokenizer(timeshift_vocab_size = 4099, dur_vocab_size = 4099, octave_vocab_size = 13, pitch_class_vocab_size = 14, instrument_vocab_size = 131, velocity_vocab_size = 130, sos_token = -1, eos_token = -2, pad_token = -3)
-    
-    # tokenizer.add_new_tokens(token_name = "soc_token_compound", token_val = -4)
-    # tokenizer.add_new_tokens(token_name = "eoc_token_compound", token_val = -5)
-    #Open json and add new tokens to the tokenizer 
-    with open(commu_con_gen_dataset().additional_token_dict_path, "r") as f:
-        additional_token_dict = json.load(f)
-    for key, value in additional_token_dict.items():
-        tokenizer.add_new_tokens(token_name = key, token_val = value)
-
-    dataset = Commu_Con_Gen_Datasets(dataset_config = commu_con_gen_dataset(), tokenizer=tokenizer, partition= "train")
-    all_lengths = []
-    for i in range(len(dataset)):
-        compounds = dataset[i]["input_ids"]
-        label = dataset[i]["labels"]
-        # print("compounds", i, len(compounds), np.array(compounds))
-        # print("label", i, len(label), np.array(label))
-        # file_name = f"/data/home/acw753/musicllama/archive_logs_con_gen_emo/{i}_{label}.mid"
-        # tokenizer.compound_to_midi(compounds[2:-1]).save(file_name)
-        all_lengths.append(len(compounds))
-        # print("compounds", len(compounds), len(label))
-    #analyze mean, median, max, min of all_lengths
-    print("mean", np.mean(all_lengths)) #nometa_nochords: #with chords:256, without chords: 61.7
-    print("median", np.median(all_lengths)) #nometa_nochords: #with chords:247, without chords: 45
-    print("max", np.max(all_lengths)) #nometa_nochords: 514 #with chords:847, without chords: 525
-    print("min", np.min(all_lengths)) #nometa_nochords: #with chords:102, without chords: 14
  

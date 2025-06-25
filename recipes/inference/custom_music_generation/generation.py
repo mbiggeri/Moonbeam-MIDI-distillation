@@ -61,7 +61,7 @@ class MusicLlama:
         # Set the seeds for reproducibility
         if is_xpu_available():
             torch.xpu.manual_seed(seed)
-        else:
+        elif torch.cuda.is_available():
             torch.cuda.manual_seed(seed)
         torch.manual_seed(seed)
 
@@ -78,7 +78,7 @@ class MusicLlama:
                 new_state_dict[k] = v
         missing_keys, unexpected_keys = model.load_state_dict(new_state_dict, strict=False)
         
-        if finetuned_PEFT_weight_path is not None:
+        if finetuned_PEFT_weight_path and finetuned_PEFT_weight_path.strip():
             from peft import PeftModel
             model = PeftModel.from_pretrained(model, finetuned_PEFT_weight_path)
             print("PEFT model loaded successfully")
@@ -140,7 +140,12 @@ class MusicLlama:
             If logprobs is True, token log probabilities are computed for each generated token.
 
         """
-
+        # --- INIZIO MODIFICA ---
+        # Determina il dispositivo corretto (GPU se disponibile, altrimenti CPU)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"--- Usando il dispositivo: {device} ---")
+        # --- FINE MODIFICA ---
+    
         bsz = len(prompt_tokens)
 
         min_prompt_len = min(len(t) for t in prompt_tokens)
@@ -149,16 +154,16 @@ class MusicLlama:
         total_len = min(self.config.max_len, max_gen_len + max_prompt_len) 
 
         pad_id = self.tokenizer.pad_token_compound
-        pad_tensor = torch.tensor(pad_id, dtype=torch.long, device="cuda").unsqueeze(0).unsqueeze(0) #create a tensor with shape: (bsz, total_len, 6) filled with pad_id
+        pad_tensor = torch.tensor(pad_id, dtype=torch.long, device=device).unsqueeze(0).unsqueeze(0) #create a tensor with shape: (bsz, total_len, 6) filled with pad_id
         tokens = pad_tensor.expand(bsz, total_len, -1).clone() #6, --> bsz, total_len, 6
 
         for k, t in enumerate(prompt_tokens): 
-            t_tensor = torch.tensor(t, dtype=torch.long, device="cuda")  # (len_t, 6) 
+            t_tensor = torch.tensor(t, dtype=torch.long, device=device)  # (len_t, 6) 
             tokens[k, :len(t)] = t_tensor  #tokens[k, :len(t)] --> len_t, 6
 
 
         prev_pos = 0
-        eos_reached = torch.tensor([False] * bsz, device="cuda")
+        eos_reached = torch.tensor([False] * bsz, device=device)
         input_mask = torch.all(tokens != pad_tensor, dim=-1).unsqueeze(-1) #(batch, len, 1)
 
         """KV Cache"""
