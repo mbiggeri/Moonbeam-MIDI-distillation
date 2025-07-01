@@ -1,382 +1,381 @@
-📁 src/
+📁 llama_recipes/
 
-└── 📂 llama_recipes/
-    ├── 📂 configs/
-    │   ├── 📄 __init__.py
-    │   ├── 📄 datasets.py
-    │   ├── 📄 ddp.py
-    │   ├── 📄 fsdp.py
-    │   ├── 📄 model_config.json
-    │   ├── 📄 model_config_commu_con_gen.json
-    │   ├── 📄 model_config_emotion_con_gen.json
-    │   ├── 📄 model_config_small.json
-    │   ├── 📄 model_config_tiny.json
-    │   ├── 📄 peft.py
-    │   ├── 📄 training.py
-    │   └── 📄 wandb.py
-    ├── 📂 data/
-    │   ├── 📂 llama_guard/
-    │   │   ├── 📄 __init__.py
-    │   │   ├── 📄 finetuning_data_formatter.py
-    │   │   ├── 📄 finetuning_data_formatter_example.py
-    │   │   └── 📄 README.md
-    │   ├── 📄 __init__.py
-    │   ├── 📄 concatenator.py
-    │   └── 📄 sampler.py
-    ├── 📂 datasets/
-    │   ├── 📂 grammar_dataset/
-    │   │   ├── 📄 __init__.py
-    │   │   ├── 📄 grammar_dataset.py
-    │   │   └── 📄 grammar_dataset_process.ipynb
-    │   ├── 📄 __init__.py
-    │   ├── 📄 alpaca_data.json
-    │   ├── 📄 alpaca_dataset.py
-    │   ├── 📄 commu_con_gen_dataset.py
-    │   ├── 📄 emophia_con_gen_dataset.py
-    │   ├── 📄 lakh_dataset.py
-    │   ├── 📄 merge_dataset.py
-    │   ├── 📄 music_tokenizer.py
-    │   └── 📄 samsum_dataset.py
-    ├── 📂 inference/
-    │   ├── 📄 __init__.py
-    │   ├── 📄 chat_utils.py
-    │   ├── 📄 checkpoint_converter_fsdp_hf.py
-    │   ├── 📄 llm.py
-    │   ├── 📄 model_utils.py
-    │   ├── 📄 prompt_format_utils.py
-    │   └── 📄 safety_utils.py
-    ├── 📂 model_checkpointing/
-    │   ├── 📄 __init__.py
-    │   └── 📄 checkpoint_handler.py
-    ├── 📂 policies/
-    │   ├── 📄 __init__.py
-    │   ├── 📄 activation_checkpointing_functions.py
-    │   ├── 📄 anyprecision_optimizer.py
-    │   ├── 📄 mixed_precision.py
-    │   └── 📄 wrapping.py
-    ├── 📂 tools/
-    │   └── 📄 convert_hf_weights_to_llama.py
-    ├── 📂 transformers_minimal/
-    │   ├── 📂 build/
-    │   │   ├── 📂 bdist.win-amd64/
-    │   │   └── 📂 lib/
-    │   │       └── 📂 transformers/
-    │   │           ├── 📂 data/
-    │   │           │   ├── 📂 datasets/
-    │   │           │   │   ├── 📄 __init__.py
-    │   │           │   │   ├── 📄 glue.py
-    │   │           │   │   ├── 📄 language_modeling.py
-    │   │           │   │   └── 📄 squad.py
-    │   │           │   ├── 📂 metrics/
-    │   │           │   │   ├── 📄 __init__.py
-    │   │           │   │   └── 📄 squad_metrics.py
-    │   │           │   ├── 📂 processors/
-    │   │           │   │   ├── 📄 __init__.py
-    │   │           │   │   ├── 📄 glue.py
-    │   │           │   │   ├── 📄 squad.py
-    │   │           │   │   ├── 📄 utils.py
-    │   │           │   │   └── 📄 xnli.py
-    │   │           │   ├── 📄 __init__.py
-    │   │           │   └── 📄 data_collator.py
-    │   │           ├── 📂 generation/
-    │   │           │   ├── 📄 __init__.py
-    │   │           │   ├── 📄 beam_constraints.py
-    │   │           │   ├── 📄 beam_search.py
-    │   │           │   ├── 📄 candidate_generator.py
-    │   │           │   ├── 📄 configuration_utils.py
-    │   │           │   ├── 📄 flax_logits_process.py
-    │   │           │   ├── 📄 flax_utils.py
-    │   │           │   ├── 📄 logits_process.py
-    │   │           │   ├── 📄 stopping_criteria.py
-    │   │           │   ├── 📄 streamers.py
-    │   │           │   ├── 📄 tf_logits_process.py
-    │   │           │   ├── 📄 tf_utils.py
-    │   │           │   ├── 📄 utils.py
-    │   │           │   └── 📄 watermarking.py
-    │   │           ├── 📂 integrations/
-    │   │           │   ├── 📄 __init__.py
-    │   │           │   ├── 📄 aqlm.py
-    │   │           │   ├── 📄 awq.py
-    │   │           │   ├── 📄 bitsandbytes.py
-    │   │           │   ├── 📄 deepspeed.py
-    │   │           │   ├── 📄 eetq.py
-    │   │           │   ├── 📄 ggml.py
-    │   │           │   ├── 📄 hqq.py
-    │   │           │   ├── 📄 integration_utils.py
-    │   │           │   ├── 📄 peft.py
-    │   │           │   ├── 📄 quanto.py
-    │   │           │   └── 📄 tpu.py
-    │   │           ├── 📂 models/
-    │   │           │   ├── 📂 auto/
-    │   │           │   │   ├── 📄 __init__.py
-    │   │           │   │   ├── 📄 auto_factory.py
-    │   │           │   │   ├── 📄 configuration_auto.py
-    │   │           │   │   ├── 📄 feature_extraction_auto.py
-    │   │           │   │   ├── 📄 image_processing_auto.py
-    │   │           │   │   ├── 📄 modeling_auto.py
-    │   │           │   │   ├── 📄 modeling_flax_auto.py
-    │   │           │   │   ├── 📄 modeling_tf_auto.py
-    │   │           │   │   ├── 📄 processing_auto.py
-    │   │           │   │   └── 📄 tokenization_auto.py
-    │   │           │   ├── 📂 bert/
-    │   │           │   │   ├── 📄 __init__.py
-    │   │           │   │   ├── 📄 configuration_bert.py
-    │   │           │   │   ├── 📄 convert_bert_original_tf2_checkpoint_to_pytorch.py
-    │   │           │   │   ├── 📄 convert_bert_original_tf_checkpoint_to_pytorch.py
-    │   │           │   │   ├── 📄 convert_bert_pytorch_checkpoint_to_original_tf.py
-    │   │           │   │   ├── 📄 convert_bert_token_dropping_original_tf2_checkpoint_to_pytorch.py
-    │   │           │   │   ├── 📄 modeling_bert.py
-    │   │           │   │   ├── 📄 modeling_flax_bert.py
-    │   │           │   │   ├── 📄 modeling_tf_bert.py
-    │   │           │   │   ├── 📄 tokenization_bert.py
-    │   │           │   │   ├── 📄 tokenization_bert_fast.py
-    │   │           │   │   └── 📄 tokenization_bert_tf.py
-    │   │           │   ├── 📂 encoder_decoder/
-    │   │           │   │   ├── 📄 __init__.py
-    │   │           │   │   ├── 📄 configuration_encoder_decoder.py
-    │   │           │   │   ├── 📄 modeling_encoder_decoder.py
-    │   │           │   │   ├── 📄 modeling_flax_encoder_decoder.py
-    │   │           │   │   └── 📄 modeling_tf_encoder_decoder.py
-    │   │           │   └── 📂 llama/
-    │   │           │       ├── 📄 __init__.py
-    │   │           │       ├── 📄 configuration_llama.py
-    │   │           │       ├── 📄 convert_llama_weights_to_hf.py
-    │   │           │       ├── 📄 modeling_flax_llama.py
-    │   │           │       ├── 📄 modeling_llama.py
-    │   │           │       ├── 📄 tokenization_llama.py
-    │   │           │       └── 📄 tokenization_llama_fast.py
-    │   │           ├── 📂 quantizers/
-    │   │           │   ├── 📄 __init__.py
-    │   │           │   ├── 📄 auto.py
-    │   │           │   ├── 📄 base.py
-    │   │           │   ├── 📄 quantizer_aqlm.py
-    │   │           │   ├── 📄 quantizer_awq.py
-    │   │           │   ├── 📄 quantizer_bnb_4bit.py
-    │   │           │   ├── 📄 quantizer_bnb_8bit.py
-    │   │           │   ├── 📄 quantizer_eetq.py
-    │   │           │   ├── 📄 quantizer_gptq.py
-    │   │           │   ├── 📄 quantizer_hqq.py
-    │   │           │   ├── 📄 quantizer_quanto.py
-    │   │           │   └── 📄 quantizers_utils.py
-    │   │           ├── 📂 utils/
-    │   │           │   ├── 📄 __init__.py
-    │   │           │   ├── 📄 backbone_utils.py
-    │   │           │   ├── 📄 bitsandbytes.py
-    │   │           │   ├── 📄 constants.py
-    │   │           │   ├── 📄 doc.py
-    │   │           │   ├── 📄 dummy_detectron2_objects.py
-    │   │           │   ├── 📄 dummy_essentia_and_librosa_and_pretty_midi_and_scipy_and_torch_objects.py
-    │   │           │   ├── 📄 dummy_flax_objects.py
-    │   │           │   ├── 📄 dummy_keras_nlp_objects.py
-    │   │           │   ├── 📄 dummy_music_objects.py
-    │   │           │   ├── 📄 dummy_pt_objects.py
-    │   │           │   ├── 📄 dummy_sentencepiece_and_tokenizers_objects.py
-    │   │           │   ├── 📄 dummy_sentencepiece_objects.py
-    │   │           │   ├── 📄 dummy_speech_objects.py
-    │   │           │   ├── 📄 dummy_tensorflow_text_objects.py
-    │   │           │   ├── 📄 dummy_tf_objects.py
-    │   │           │   ├── 📄 dummy_tokenizers_objects.py
-    │   │           │   ├── 📄 dummy_torchaudio_objects.py
-    │   │           │   ├── 📄 dummy_vision_objects.py
-    │   │           │   ├── 📄 fx.py
-    │   │           │   ├── 📄 generic.py
-    │   │           │   ├── 📄 hp_naming.py
-    │   │           │   ├── 📄 hub.py
-    │   │           │   ├── 📄 import_utils.py
-    │   │           │   ├── 📄 logging.py
-    │   │           │   ├── 📄 model_parallel_utils.py
-    │   │           │   ├── 📄 notebook.py
-    │   │           │   ├── 📄 peft_utils.py
-    │   │           │   ├── 📄 quantization_config.py
-    │   │           │   ├── 📄 sentencepiece_model_pb2.py
-    │   │           │   ├── 📄 sentencepiece_model_pb2_new.py
-    │   │           │   └── 📄 versions.py
-    │   │           ├── 📄 __init__.py
-    │   │           ├── 📄 activations.py
-    │   │           ├── 📄 cache_utils.py
-    │   │           ├── 📄 configuration_utils.py
-    │   │           ├── 📄 convert_slow_tokenizer.py
-    │   │           ├── 📄 dependency_versions_check.py
-    │   │           ├── 📄 dependency_versions_table.py
-    │   │           ├── 📄 dynamic_module_utils.py
-    │   │           ├── 📄 file_utils.py
-    │   │           ├── 📄 modeling_attn_mask_utils.py
-    │   │           ├── 📄 modeling_gguf_pytorch_utils.py
-    │   │           ├── 📄 modeling_outputs.py
-    │   │           ├── 📄 modeling_utils.py
-    │   │           ├── 📄 pytorch_utils.py
-    │   │           ├── 📄 safetensors_conversion.py
-    │   │           ├── 📄 tokenization_utils.py
-    │   │           ├── 📄 tokenization_utils_base.py
-    │   │           └── 📄 tokenization_utils_fast.py
-    │   ├── 📂 src/
-    │   │   ├── 📂 transformers/
-    │   │   │   ├── 📂 data/
-    │   │   │   │   ├── 📂 datasets/
-    │   │   │   │   │   ├── 📄 __init__.py
-    │   │   │   │   │   ├── 📄 glue.py
-    │   │   │   │   │   ├── 📄 language_modeling.py
-    │   │   │   │   │   └── 📄 squad.py
-    │   │   │   │   ├── 📂 metrics/
-    │   │   │   │   │   ├── 📄 __init__.py
-    │   │   │   │   │   └── 📄 squad_metrics.py
-    │   │   │   │   ├── 📂 processors/
-    │   │   │   │   │   ├── 📄 __init__.py
-    │   │   │   │   │   ├── 📄 glue.py
-    │   │   │   │   │   ├── 📄 squad.py
-    │   │   │   │   │   ├── 📄 utils.py
-    │   │   │   │   │   └── 📄 xnli.py
-    │   │   │   │   ├── 📄 __init__.py
-    │   │   │   │   └── 📄 data_collator.py
-    │   │   │   ├── 📂 generation/
-    │   │   │   │   ├── 📄 __init__.py
-    │   │   │   │   ├── 📄 beam_constraints.py
-    │   │   │   │   ├── 📄 beam_search.py
-    │   │   │   │   ├── 📄 candidate_generator.py
-    │   │   │   │   ├── 📄 configuration_utils.py
-    │   │   │   │   ├── 📄 flax_logits_process.py
-    │   │   │   │   ├── 📄 flax_utils.py
-    │   │   │   │   ├── 📄 logits_process.py
-    │   │   │   │   ├── 📄 stopping_criteria.py
-    │   │   │   │   ├── 📄 streamers.py
-    │   │   │   │   ├── 📄 tf_logits_process.py
-    │   │   │   │   ├── 📄 tf_utils.py
-    │   │   │   │   ├── 📄 utils.py
-    │   │   │   │   └── 📄 watermarking.py
-    │   │   │   ├── 📂 integrations/
-    │   │   │   │   ├── 📄 __init__.py
-    │   │   │   │   ├── 📄 aqlm.py
-    │   │   │   │   ├── 📄 awq.py
-    │   │   │   │   ├── 📄 bitsandbytes.py
-    │   │   │   │   ├── 📄 deepspeed.py
-    │   │   │   │   ├── 📄 eetq.py
-    │   │   │   │   ├── 📄 ggml.py
-    │   │   │   │   ├── 📄 hqq.py
-    │   │   │   │   ├── 📄 integration_utils.py
-    │   │   │   │   ├── 📄 peft.py
-    │   │   │   │   ├── 📄 quanto.py
-    │   │   │   │   └── 📄 tpu.py
-    │   │   │   ├── 📂 models/
-    │   │   │   │   ├── 📂 auto/
-    │   │   │   │   │   ├── 📄 __init__.py
-    │   │   │   │   │   ├── 📄 auto_factory.py
-    │   │   │   │   │   ├── 📄 configuration_auto.py
-    │   │   │   │   │   ├── 📄 feature_extraction_auto.py
-    │   │   │   │   │   ├── 📄 image_processing_auto.py
-    │   │   │   │   │   ├── 📄 modeling_auto.py
-    │   │   │   │   │   ├── 📄 modeling_flax_auto.py
-    │   │   │   │   │   ├── 📄 modeling_tf_auto.py
-    │   │   │   │   │   ├── 📄 processing_auto.py
-    │   │   │   │   │   └── 📄 tokenization_auto.py
-    │   │   │   │   ├── 📂 bert/
-    │   │   │   │   │   ├── 📄 __init__.py
-    │   │   │   │   │   ├── 📄 configuration_bert.py
-    │   │   │   │   │   ├── 📄 convert_bert_original_tf2_checkpoint_to_pytorch.py
-    │   │   │   │   │   ├── 📄 convert_bert_original_tf_checkpoint_to_pytorch.py
-    │   │   │   │   │   ├── 📄 convert_bert_pytorch_checkpoint_to_original_tf.py
-    │   │   │   │   │   ├── 📄 convert_bert_token_dropping_original_tf2_checkpoint_to_pytorch.py
-    │   │   │   │   │   ├── 📄 modeling_bert.py
-    │   │   │   │   │   ├── 📄 modeling_flax_bert.py
-    │   │   │   │   │   ├── 📄 modeling_tf_bert.py
-    │   │   │   │   │   ├── 📄 tokenization_bert.py
-    │   │   │   │   │   ├── 📄 tokenization_bert_fast.py
-    │   │   │   │   │   └── 📄 tokenization_bert_tf.py
-    │   │   │   │   ├── 📂 encoder_decoder/
-    │   │   │   │   │   ├── 📄 __init__.py
-    │   │   │   │   │   ├── 📄 configuration_encoder_decoder.py
-    │   │   │   │   │   ├── 📄 modeling_encoder_decoder.py
-    │   │   │   │   │   ├── 📄 modeling_flax_encoder_decoder.py
-    │   │   │   │   │   └── 📄 modeling_tf_encoder_decoder.py
-    │   │   │   │   └── 📂 llama/
-    │   │   │   │       ├── 📄 __init__.py
-    │   │   │   │       ├── 📄 configuration_llama.py
-    │   │   │   │       ├── 📄 convert_llama_weights_to_hf.py
-    │   │   │   │       ├── 📄 modeling_flax_llama.py
-    │   │   │   │       ├── 📄 modeling_llama.py
-    │   │   │   │       ├── 📄 tokenization_llama.py
-    │   │   │   │       └── 📄 tokenization_llama_fast.py
-    │   │   │   ├── 📂 quantizers/
-    │   │   │   │   ├── 📄 __init__.py
-    │   │   │   │   ├── 📄 auto.py
-    │   │   │   │   ├── 📄 base.py
-    │   │   │   │   ├── 📄 quantizer_aqlm.py
-    │   │   │   │   ├── 📄 quantizer_awq.py
-    │   │   │   │   ├── 📄 quantizer_bnb_4bit.py
-    │   │   │   │   ├── 📄 quantizer_bnb_8bit.py
-    │   │   │   │   ├── 📄 quantizer_eetq.py
-    │   │   │   │   ├── 📄 quantizer_gptq.py
-    │   │   │   │   ├── 📄 quantizer_hqq.py
-    │   │   │   │   ├── 📄 quantizer_quanto.py
-    │   │   │   │   └── 📄 quantizers_utils.py
-    │   │   │   ├── 📂 utils/
-    │   │   │   │   ├── 📄 __init__.py
-    │   │   │   │   ├── 📄 backbone_utils.py
-    │   │   │   │   ├── 📄 bitsandbytes.py
-    │   │   │   │   ├── 📄 constants.py
-    │   │   │   │   ├── 📄 doc.py
-    │   │   │   │   ├── 📄 dummy_detectron2_objects.py
-    │   │   │   │   ├── 📄 dummy_essentia_and_librosa_and_pretty_midi_and_scipy_and_torch_objects.py
-    │   │   │   │   ├── 📄 dummy_flax_objects.py
-    │   │   │   │   ├── 📄 dummy_keras_nlp_objects.py
-    │   │   │   │   ├── 📄 dummy_music_objects.py
-    │   │   │   │   ├── 📄 dummy_pt_objects.py
-    │   │   │   │   ├── 📄 dummy_sentencepiece_and_tokenizers_objects.py
-    │   │   │   │   ├── 📄 dummy_sentencepiece_objects.py
-    │   │   │   │   ├── 📄 dummy_speech_objects.py
-    │   │   │   │   ├── 📄 dummy_tensorflow_text_objects.py
-    │   │   │   │   ├── 📄 dummy_tf_objects.py
-    │   │   │   │   ├── 📄 dummy_tokenizers_objects.py
-    │   │   │   │   ├── 📄 dummy_torchaudio_objects.py
-    │   │   │   │   ├── 📄 dummy_vision_objects.py
-    │   │   │   │   ├── 📄 fx.py
-    │   │   │   │   ├── 📄 generic.py
-    │   │   │   │   ├── 📄 hp_naming.py
-    │   │   │   │   ├── 📄 hub.py
-    │   │   │   │   ├── 📄 import_utils.py
-    │   │   │   │   ├── 📄 logging.py
-    │   │   │   │   ├── 📄 model_parallel_utils.py
-    │   │   │   │   ├── 📄 notebook.py
-    │   │   │   │   ├── 📄 peft_utils.py
-    │   │   │   │   ├── 📄 quantization_config.py
-    │   │   │   │   ├── 📄 sentencepiece_model_pb2.py
-    │   │   │   │   ├── 📄 sentencepiece_model_pb2_new.py
-    │   │   │   │   └── 📄 versions.py
-    │   │   │   ├── 📄 __init__.py
-    │   │   │   ├── 📄 activations.py
-    │   │   │   ├── 📄 cache_utils.py
-    │   │   │   ├── 📄 configuration_utils.py
-    │   │   │   ├── 📄 convert_slow_tokenizer.py
-    │   │   │   ├── 📄 dependency_versions_check.py
-    │   │   │   ├── 📄 dependency_versions_table.py
-    │   │   │   ├── 📄 dynamic_module_utils.py
-    │   │   │   ├── 📄 file_utils.py
-    │   │   │   ├── 📄 modeling_attn_mask_utils.py
-    │   │   │   ├── 📄 modeling_gguf_pytorch_utils.py
-    │   │   │   ├── 📄 modeling_outputs.py
-    │   │   │   ├── 📄 modeling_utils.py
-    │   │   │   ├── 📄 pytorch_utils.py
-    │   │   │   ├── 📄 safetensors_conversion.py
-    │   │   │   ├── 📄 tokenization_utils.py
-    │   │   │   ├── 📄 tokenization_utils_base.py
-    │   │   │   └── 📄 tokenization_utils_fast.py
-    │   │   └── 📂 transformers.egg-info/
-    │   │       ├── 📄 dependency_links.txt
-    │   │       ├── 📄 PKG-INFO
-    │   │       ├── 📄 SOURCES.txt
-    │   │       └── 📄 top_level.txt
-    │   └── 📄 pyproject.toml
-    ├── 📂 utils/
-    │   ├── 📂 hf_llama_conversion/
-    │   │   ├── 📄 compare_llama_weights.py
-    │   │   └── 📄 README.md
-    │   ├── 📄 __init__.py
-    │   ├── 📄 config_utils.py
-    │   ├── 📄 dataset_utils.py
-    │   ├── 📄 flop_utils.py
-    │   ├── 📄 fsdp_utils.py
-    │   ├── 📄 memory_utils.py
-    │   ├── 📄 plot_metrics.py
-    │   └── 📄 train_utils.py
-    ├── 📄 finetuning.py
-    ├── 📄 overfitting_test.py
-    └── 📄 real_finetuning_uncon_gen.py
+├── 📂 configs/
+│   ├── 📄 __init__.py
+│   ├── 📄 datasets.py
+│   ├── 📄 ddp.py
+│   ├── 📄 fsdp.py
+│   ├── 📄 model_config.json
+│   ├── 📄 model_config_commu_con_gen.json
+│   ├── 📄 model_config_emotion_con_gen.json
+│   ├── 📄 model_config_small.json
+│   ├── 📄 model_config_tiny.json
+│   ├── 📄 peft.py
+│   ├── 📄 training.py
+│   └── 📄 wandb.py
+├── 📂 data/
+│   ├── 📂 llama_guard/
+│   │   ├── 📄 __init__.py
+│   │   ├── 📄 finetuning_data_formatter.py
+│   │   ├── 📄 finetuning_data_formatter_example.py
+│   │   └── 📄 README.md
+│   ├── 📄 __init__.py
+│   ├── 📄 concatenator.py
+│   └── 📄 sampler.py
+├── 📂 datasets/
+│   ├── 📂 grammar_dataset/
+│   │   ├── 📄 __init__.py
+│   │   ├── 📄 grammar_dataset.py
+│   │   └── 📄 grammar_dataset_process.ipynb
+│   ├── 📄 __init__.py
+│   ├── 📄 alpaca_data.json
+│   ├── 📄 alpaca_dataset.py
+│   ├── 📄 commu_con_gen_dataset.py
+│   ├── 📄 emophia_con_gen_dataset.py
+│   ├── 📄 lakh_dataset.py
+│   ├── 📄 merge_dataset.py
+│   ├── 📄 music_tokenizer.py
+│   └── 📄 samsum_dataset.py
+├── 📂 inference/
+│   ├── 📄 __init__.py
+│   ├── 📄 chat_utils.py
+│   ├── 📄 checkpoint_converter_fsdp_hf.py
+│   ├── 📄 llm.py
+│   ├── 📄 model_utils.py
+│   ├── 📄 prompt_format_utils.py
+│   └── 📄 safety_utils.py
+├── 📂 model_checkpointing/
+│   ├── 📄 __init__.py
+│   └── 📄 checkpoint_handler.py
+├── 📂 policies/
+│   ├── 📄 __init__.py
+│   ├── 📄 activation_checkpointing_functions.py
+│   ├── 📄 anyprecision_optimizer.py
+│   ├── 📄 mixed_precision.py
+│   └── 📄 wrapping.py
+├── 📂 tools/
+│   └── 📄 convert_hf_weights_to_llama.py
+├── 📂 transformers_minimal/
+│   ├── 📂 build/
+│   │   ├── 📂 bdist.win-amd64/
+│   │   └── 📂 lib/
+│   │       └── 📂 transformers/
+│   │           ├── 📂 data/
+│   │           │   ├── 📂 datasets/
+│   │           │   │   ├── 📄 __init__.py
+│   │           │   │   ├── 📄 glue.py
+│   │           │   │   ├── 📄 language_modeling.py
+│   │           │   │   └── 📄 squad.py
+│   │           │   ├── 📂 metrics/
+│   │           │   │   ├── 📄 __init__.py
+│   │           │   │   └── 📄 squad_metrics.py
+│   │           │   ├── 📂 processors/
+│   │           │   │   ├── 📄 __init__.py
+│   │           │   │   ├── 📄 glue.py
+│   │           │   │   ├── 📄 squad.py
+│   │           │   │   ├── 📄 utils.py
+│   │           │   │   └── 📄 xnli.py
+│   │           │   ├── 📄 __init__.py
+│   │           │   └── 📄 data_collator.py
+│   │           ├── 📂 generation/
+│   │           │   ├── 📄 __init__.py
+│   │           │   ├── 📄 beam_constraints.py
+│   │           │   ├── 📄 beam_search.py
+│   │           │   ├── 📄 candidate_generator.py
+│   │           │   ├── 📄 configuration_utils.py
+│   │           │   ├── 📄 flax_logits_process.py
+│   │           │   ├── 📄 flax_utils.py
+│   │           │   ├── 📄 logits_process.py
+│   │           │   ├── 📄 stopping_criteria.py
+│   │           │   ├── 📄 streamers.py
+│   │           │   ├── 📄 tf_logits_process.py
+│   │           │   ├── 📄 tf_utils.py
+│   │           │   ├── 📄 utils.py
+│   │           │   └── 📄 watermarking.py
+│   │           ├── 📂 integrations/
+│   │           │   ├── 📄 __init__.py
+│   │           │   ├── 📄 aqlm.py
+│   │           │   ├── 📄 awq.py
+│   │           │   ├── 📄 bitsandbytes.py
+│   │           │   ├── 📄 deepspeed.py
+│   │           │   ├── 📄 eetq.py
+│   │           │   ├── 📄 ggml.py
+│   │           │   ├── 📄 hqq.py
+│   │           │   ├── 📄 integration_utils.py
+│   │           │   ├── 📄 peft.py
+│   │           │   ├── 📄 quanto.py
+│   │           │   └── 📄 tpu.py
+│   │           ├── 📂 models/
+│   │           │   ├── 📂 auto/
+│   │           │   │   ├── 📄 __init__.py
+│   │           │   │   ├── 📄 auto_factory.py
+│   │           │   │   ├── 📄 configuration_auto.py
+│   │           │   │   ├── 📄 feature_extraction_auto.py
+│   │           │   │   ├── 📄 image_processing_auto.py
+│   │           │   │   ├── 📄 modeling_auto.py
+│   │           │   │   ├── 📄 modeling_flax_auto.py
+│   │           │   │   ├── 📄 modeling_tf_auto.py
+│   │           │   │   ├── 📄 processing_auto.py
+│   │           │   │   └── 📄 tokenization_auto.py
+│   │           │   ├── 📂 bert/
+│   │           │   │   ├── 📄 __init__.py
+│   │           │   │   ├── 📄 configuration_bert.py
+│   │           │   │   ├── 📄 convert_bert_original_tf2_checkpoint_to_pytorch.py
+│   │           │   │   ├── 📄 convert_bert_original_tf_checkpoint_to_pytorch.py
+│   │           │   │   ├── 📄 convert_bert_pytorch_checkpoint_to_original_tf.py
+│   │           │   │   ├── 📄 convert_bert_token_dropping_original_tf2_checkpoint_to_pytorch.py
+│   │           │   │   ├── 📄 modeling_bert.py
+│   │           │   │   ├── 📄 modeling_flax_bert.py
+│   │           │   │   ├── 📄 modeling_tf_bert.py
+│   │           │   │   ├── 📄 tokenization_bert.py
+│   │           │   │   ├── 📄 tokenization_bert_fast.py
+│   │           │   │   └── 📄 tokenization_bert_tf.py
+│   │           │   ├── 📂 encoder_decoder/
+│   │           │   │   ├── 📄 __init__.py
+│   │           │   │   ├── 📄 configuration_encoder_decoder.py
+│   │           │   │   ├── 📄 modeling_encoder_decoder.py
+│   │           │   │   ├── 📄 modeling_flax_encoder_decoder.py
+│   │           │   │   └── 📄 modeling_tf_encoder_decoder.py
+│   │           │   └── 📂 llama/
+│   │           │       ├── 📄 __init__.py
+│   │           │       ├── 📄 configuration_llama.py
+│   │           │       ├── 📄 convert_llama_weights_to_hf.py
+│   │           │       ├── 📄 modeling_flax_llama.py
+│   │           │       ├── 📄 modeling_llama.py
+│   │           │       ├── 📄 tokenization_llama.py
+│   │           │       └── 📄 tokenization_llama_fast.py
+│   │           ├── 📂 quantizers/
+│   │           │   ├── 📄 __init__.py
+│   │           │   ├── 📄 auto.py
+│   │           │   ├── 📄 base.py
+│   │           │   ├── 📄 quantizer_aqlm.py
+│   │           │   ├── 📄 quantizer_awq.py
+│   │           │   ├── 📄 quantizer_bnb_4bit.py
+│   │           │   ├── 📄 quantizer_bnb_8bit.py
+│   │           │   ├── 📄 quantizer_eetq.py
+│   │           │   ├── 📄 quantizer_gptq.py
+│   │           │   ├── 📄 quantizer_hqq.py
+│   │           │   ├── 📄 quantizer_quanto.py
+│   │           │   └── 📄 quantizers_utils.py
+│   │           ├── 📂 utils/
+│   │           │   ├── 📄 __init__.py
+│   │           │   ├── 📄 backbone_utils.py
+│   │           │   ├── 📄 bitsandbytes.py
+│   │           │   ├── 📄 constants.py
+│   │           │   ├── 📄 doc.py
+│   │           │   ├── 📄 dummy_detectron2_objects.py
+│   │           │   ├── 📄 dummy_essentia_and_librosa_and_pretty_midi_and_scipy_and_torch_objects.py
+│   │           │   ├── 📄 dummy_flax_objects.py
+│   │           │   ├── 📄 dummy_keras_nlp_objects.py
+│   │           │   ├── 📄 dummy_music_objects.py
+│   │           │   ├── 📄 dummy_pt_objects.py
+│   │           │   ├── 📄 dummy_sentencepiece_and_tokenizers_objects.py
+│   │           │   ├── 📄 dummy_sentencepiece_objects.py
+│   │           │   ├── 📄 dummy_speech_objects.py
+│   │           │   ├── 📄 dummy_tensorflow_text_objects.py
+│   │           │   ├── 📄 dummy_tf_objects.py
+│   │           │   ├── 📄 dummy_tokenizers_objects.py
+│   │           │   ├── 📄 dummy_torchaudio_objects.py
+│   │           │   ├── 📄 dummy_vision_objects.py
+│   │           │   ├── 📄 fx.py
+│   │           │   ├── 📄 generic.py
+│   │           │   ├── 📄 hp_naming.py
+│   │           │   ├── 📄 hub.py
+│   │           │   ├── 📄 import_utils.py
+│   │           │   ├── 📄 logging.py
+│   │           │   ├── 📄 model_parallel_utils.py
+│   │           │   ├── 📄 notebook.py
+│   │           │   ├── 📄 peft_utils.py
+│   │           │   ├── 📄 quantization_config.py
+│   │           │   ├── 📄 sentencepiece_model_pb2.py
+│   │           │   ├── 📄 sentencepiece_model_pb2_new.py
+│   │           │   └── 📄 versions.py
+│   │           ├── 📄 __init__.py
+│   │           ├── 📄 activations.py
+│   │           ├── 📄 cache_utils.py
+│   │           ├── 📄 configuration_utils.py
+│   │           ├── 📄 convert_slow_tokenizer.py
+│   │           ├── 📄 dependency_versions_check.py
+│   │           ├── 📄 dependency_versions_table.py
+│   │           ├── 📄 dynamic_module_utils.py
+│   │           ├── 📄 file_utils.py
+│   │           ├── 📄 modeling_attn_mask_utils.py
+│   │           ├── 📄 modeling_gguf_pytorch_utils.py
+│   │           ├── 📄 modeling_outputs.py
+│   │           ├── 📄 modeling_utils.py
+│   │           ├── 📄 pytorch_utils.py
+│   │           ├── 📄 safetensors_conversion.py
+│   │           ├── 📄 tokenization_utils.py
+│   │           ├── 📄 tokenization_utils_base.py
+│   │           └── 📄 tokenization_utils_fast.py
+│   ├── 📂 src/
+│   │   ├── 📂 transformers/
+│   │   │   ├── 📂 data/
+│   │   │   │   ├── 📂 datasets/
+│   │   │   │   │   ├── 📄 __init__.py
+│   │   │   │   │   ├── 📄 glue.py
+│   │   │   │   │   ├── 📄 language_modeling.py
+│   │   │   │   │   └── 📄 squad.py
+│   │   │   │   ├── 📂 metrics/
+│   │   │   │   │   ├── 📄 __init__.py
+│   │   │   │   │   └── 📄 squad_metrics.py
+│   │   │   │   ├── 📂 processors/
+│   │   │   │   │   ├── 📄 __init__.py
+│   │   │   │   │   ├── 📄 glue.py
+│   │   │   │   │   ├── 📄 squad.py
+│   │   │   │   │   ├── 📄 utils.py
+│   │   │   │   │   └── 📄 xnli.py
+│   │   │   │   ├── 📄 __init__.py
+│   │   │   │   └── 📄 data_collator.py
+│   │   │   ├── 📂 generation/
+│   │   │   │   ├── 📄 __init__.py
+│   │   │   │   ├── 📄 beam_constraints.py
+│   │   │   │   ├── 📄 beam_search.py
+│   │   │   │   ├── 📄 candidate_generator.py
+│   │   │   │   ├── 📄 configuration_utils.py
+│   │   │   │   ├── 📄 flax_logits_process.py
+│   │   │   │   ├── 📄 flax_utils.py
+│   │   │   │   ├── 📄 logits_process.py
+│   │   │   │   ├── 📄 stopping_criteria.py
+│   │   │   │   ├── 📄 streamers.py
+│   │   │   │   ├── 📄 tf_logits_process.py
+│   │   │   │   ├── 📄 tf_utils.py
+│   │   │   │   ├── 📄 utils.py
+│   │   │   │   └── 📄 watermarking.py
+│   │   │   ├── 📂 integrations/
+│   │   │   │   ├── 📄 __init__.py
+│   │   │   │   ├── 📄 aqlm.py
+│   │   │   │   ├── 📄 awq.py
+│   │   │   │   ├── 📄 bitsandbytes.py
+│   │   │   │   ├── 📄 deepspeed.py
+│   │   │   │   ├── 📄 eetq.py
+│   │   │   │   ├── 📄 ggml.py
+│   │   │   │   ├── 📄 hqq.py
+│   │   │   │   ├── 📄 integration_utils.py
+│   │   │   │   ├── 📄 peft.py
+│   │   │   │   ├── 📄 quanto.py
+│   │   │   │   └── 📄 tpu.py
+│   │   │   ├── 📂 models/
+│   │   │   │   ├── 📂 auto/
+│   │   │   │   │   ├── 📄 __init__.py
+│   │   │   │   │   ├── 📄 auto_factory.py
+│   │   │   │   │   ├── 📄 configuration_auto.py
+│   │   │   │   │   ├── 📄 feature_extraction_auto.py
+│   │   │   │   │   ├── 📄 image_processing_auto.py
+│   │   │   │   │   ├── 📄 modeling_auto.py
+│   │   │   │   │   ├── 📄 modeling_flax_auto.py
+│   │   │   │   │   ├── 📄 modeling_tf_auto.py
+│   │   │   │   │   ├── 📄 processing_auto.py
+│   │   │   │   │   └── 📄 tokenization_auto.py
+│   │   │   │   ├── 📂 bert/
+│   │   │   │   │   ├── 📄 __init__.py
+│   │   │   │   │   ├── 📄 configuration_bert.py
+│   │   │   │   │   ├── 📄 convert_bert_original_tf2_checkpoint_to_pytorch.py
+│   │   │   │   │   ├── 📄 convert_bert_original_tf_checkpoint_to_pytorch.py
+│   │   │   │   │   ├── 📄 convert_bert_pytorch_checkpoint_to_original_tf.py
+│   │   │   │   │   ├── 📄 convert_bert_token_dropping_original_tf2_checkpoint_to_pytorch.py
+│   │   │   │   │   ├── 📄 modeling_bert.py
+│   │   │   │   │   ├── 📄 modeling_flax_bert.py
+│   │   │   │   │   ├── 📄 modeling_tf_bert.py
+│   │   │   │   │   ├── 📄 tokenization_bert.py
+│   │   │   │   │   ├── 📄 tokenization_bert_fast.py
+│   │   │   │   │   └── 📄 tokenization_bert_tf.py
+│   │   │   │   ├── 📂 encoder_decoder/
+│   │   │   │   │   ├── 📄 __init__.py
+│   │   │   │   │   ├── 📄 configuration_encoder_decoder.py
+│   │   │   │   │   ├── 📄 modeling_encoder_decoder.py
+│   │   │   │   │   ├── 📄 modeling_flax_encoder_decoder.py
+│   │   │   │   │   └── 📄 modeling_tf_encoder_decoder.py
+│   │   │   │   └── 📂 llama/
+│   │   │   │       ├── 📄 __init__.py
+│   │   │   │       ├── 📄 configuration_llama.py
+│   │   │   │       ├── 📄 convert_llama_weights_to_hf.py
+│   │   │   │       ├── 📄 modeling_flax_llama.py
+│   │   │   │       ├── 📄 modeling_llama.py
+│   │   │   │       ├── 📄 tokenization_llama.py
+│   │   │   │       └── 📄 tokenization_llama_fast.py
+│   │   │   ├── 📂 quantizers/
+│   │   │   │   ├── 📄 __init__.py
+│   │   │   │   ├── 📄 auto.py
+│   │   │   │   ├── 📄 base.py
+│   │   │   │   ├── 📄 quantizer_aqlm.py
+│   │   │   │   ├── 📄 quantizer_awq.py
+│   │   │   │   ├── 📄 quantizer_bnb_4bit.py
+│   │   │   │   ├── 📄 quantizer_bnb_8bit.py
+│   │   │   │   ├── 📄 quantizer_eetq.py
+│   │   │   │   ├── 📄 quantizer_gptq.py
+│   │   │   │   ├── 📄 quantizer_hqq.py
+│   │   │   │   ├── 📄 quantizer_quanto.py
+│   │   │   │   └── 📄 quantizers_utils.py
+│   │   │   ├── 📂 utils/
+│   │   │   │   ├── 📄 __init__.py
+│   │   │   │   ├── 📄 backbone_utils.py
+│   │   │   │   ├── 📄 bitsandbytes.py
+│   │   │   │   ├── 📄 constants.py
+│   │   │   │   ├── 📄 doc.py
+│   │   │   │   ├── 📄 dummy_detectron2_objects.py
+│   │   │   │   ├── 📄 dummy_essentia_and_librosa_and_pretty_midi_and_scipy_and_torch_objects.py
+│   │   │   │   ├── 📄 dummy_flax_objects.py
+│   │   │   │   ├── 📄 dummy_keras_nlp_objects.py
+│   │   │   │   ├── 📄 dummy_music_objects.py
+│   │   │   │   ├── 📄 dummy_pt_objects.py
+│   │   │   │   ├── 📄 dummy_sentencepiece_and_tokenizers_objects.py
+│   │   │   │   ├── 📄 dummy_sentencepiece_objects.py
+│   │   │   │   ├── 📄 dummy_speech_objects.py
+│   │   │   │   ├── 📄 dummy_tensorflow_text_objects.py
+│   │   │   │   ├── 📄 dummy_tf_objects.py
+│   │   │   │   ├── 📄 dummy_tokenizers_objects.py
+│   │   │   │   ├── 📄 dummy_torchaudio_objects.py
+│   │   │   │   ├── 📄 dummy_vision_objects.py
+│   │   │   │   ├── 📄 fx.py
+│   │   │   │   ├── 📄 generic.py
+│   │   │   │   ├── 📄 hp_naming.py
+│   │   │   │   ├── 📄 hub.py
+│   │   │   │   ├── 📄 import_utils.py
+│   │   │   │   ├── 📄 logging.py
+│   │   │   │   ├── 📄 model_parallel_utils.py
+│   │   │   │   ├── 📄 notebook.py
+│   │   │   │   ├── 📄 peft_utils.py
+│   │   │   │   ├── 📄 quantization_config.py
+│   │   │   │   ├── 📄 sentencepiece_model_pb2.py
+│   │   │   │   ├── 📄 sentencepiece_model_pb2_new.py
+│   │   │   │   └── 📄 versions.py
+│   │   │   ├── 📄 __init__.py
+│   │   │   ├── 📄 activations.py
+│   │   │   ├── 📄 cache_utils.py
+│   │   │   ├── 📄 configuration_utils.py
+│   │   │   ├── 📄 convert_slow_tokenizer.py
+│   │   │   ├── 📄 dependency_versions_check.py
+│   │   │   ├── 📄 dependency_versions_table.py
+│   │   │   ├── 📄 dynamic_module_utils.py
+│   │   │   ├── 📄 file_utils.py
+│   │   │   ├── 📄 modeling_attn_mask_utils.py
+│   │   │   ├── 📄 modeling_gguf_pytorch_utils.py
+│   │   │   ├── 📄 modeling_outputs.py
+│   │   │   ├── 📄 modeling_utils.py
+│   │   │   ├── 📄 pytorch_utils.py
+│   │   │   ├── 📄 safetensors_conversion.py
+│   │   │   ├── 📄 tokenization_utils.py
+│   │   │   ├── 📄 tokenization_utils_base.py
+│   │   │   └── 📄 tokenization_utils_fast.py
+│   │   └── 📂 transformers.egg-info/
+│   │       ├── 📄 dependency_links.txt
+│   │       ├── 📄 PKG-INFO
+│   │       ├── 📄 SOURCES.txt
+│   │       └── 📄 top_level.txt
+│   └── 📄 pyproject.toml
+├── 📂 utils/
+│   ├── 📂 hf_llama_conversion/
+│   │   ├── 📄 compare_llama_weights.py
+│   │   └── 📄 README.md
+│   ├── 📄 __init__.py
+│   ├── 📄 config_utils.py
+│   ├── 📄 dataset_utils.py
+│   ├── 📄 flop_utils.py
+│   ├── 📄 fsdp_utils.py
+│   ├── 📄 memory_utils.py
+│   ├── 📄 plot_metrics.py
+│   └── 📄 train_utils.py
+├── 📄 finetuning.py
+├── 📄 overfitting_test.py
+└── 📄 real_finetuning_uncon_gen.py

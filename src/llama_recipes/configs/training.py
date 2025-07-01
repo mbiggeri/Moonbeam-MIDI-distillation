@@ -59,3 +59,6 @@ class train_config:
     teacher_model_checkpoint: str = None
     teacher_model_config: str = None
     tokenizer_path: str = None
+    
+    teacher_peft_weights: str = ""
+    additional_token_dict: str = ""

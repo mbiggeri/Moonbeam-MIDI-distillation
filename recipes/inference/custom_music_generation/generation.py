@@ -22,6 +22,16 @@ from fairscale.nn.model_parallel.initialize import (
     model_parallel_is_initialized,
 )
 
+# from llama.model import ModelArgs, Transformer
+# from llama.tokenizer import ChatFormat, Dialog, Message, Tokenizer
+
+
+class CompletionPrediction(TypedDict, total=False):
+    generation: str
+    tokens: List[str]  # not required
+    logprobs: List[float]  # not required
+
+
 
 class MusicLlama:
     @staticmethod

@@ -291,6 +291,7 @@ class MusicLlamaConditional:
         time_signature_condition: List[str],
         num_measures_condition: List[int],
         max_gen_len: int,
+        min_gen_len: int = 0,
         temperature: float = 0.6,
         top_p: float = 0.9,
         logprobs: bool = False,
@@ -373,12 +374,56 @@ class MusicLlamaConditional:
             for attribute in ["timeshift_dict_decode", "duration_dict_decode", "octave_dict_decode", "pitch_dict_decode", "instrument_dict_decode", "velocity_dict_decode"]:
                 output_decoder = self.model.forward(decoded_hidden_state = hidden_state, decoded_language_tokens = next_decoder_token, attention_mask = None, metadata_condition = metadata_tokens_expanded, bar_beat_chord_condition = bar_beat_chord_condition_expanded)
                 generation_logits = output_decoder.generation_logits ##batch*len_x, len_y, decode_vocab_size
+                
+                # NEW EOS PREVENT LOGIC (if min_gen_len is > 0)
+                num_generated_tokens = cur_pos - min_prompt_len
+                if num_generated_tokens < min_gen_len:
+                    eos_token_id = -1 # Default to invalid
+                    if attribute == "timeshift_dict_decode":
+                        eos_token_id = self.tokenizer.timeshift_dict[self.tokenizer.eos_timeshift]
+                    elif attribute == "duration_dict_decode":
+                        eos_token_id = self.tokenizer.duration_dict[self.tokenizer.eos_dur]
+                    elif attribute == "octave_dict_decode":
+                        eos_token_id = self.tokenizer.octave_dict[self.tokenizer.eos_octave]
+                    elif attribute == "pitch_dict_decode":
+                        eos_token_id = self.tokenizer.pitch_dict[self.tokenizer.eos_pitch_class]
+                    elif attribute == "instrument_dict_decode":
+                        eos_token_id = self.tokenizer.instrument_dict[self.tokenizer.eos_instrument]
+                    elif attribute == "velocity_dict_decode":
+                        eos_token_id = self.tokenizer.velocity_dict[self.tokenizer.eos_velocity]
+                    
+                    if eos_token_id != -1:
+                        # Set the probability of the EOS token to zero by setting its logit to negative infinity
+                        generation_logits[:, -1, eos_token_id] = -float('inf')
+                
                 hidden_state = output_decoder.generation_hidden_state ##num_layers, batch*len_x, dim
 
                 sample_indices = list(getattr(self.tokenizer, attribute).keys())
                 sample_indices_set = set(sample_indices)
                 if temperature > 0:
                     probs = torch.softmax(generation_logits[:, -1, : ]/ temperature, dim=-1) 
+                    
+                    '''
+                    # --- START OF NEW DEBUG BLOCK FOR PRINTING TOP-5 TOKEN PROBABILITY ---
+                    # Get the top 5 probabilities and their indices
+                    top_probs, top_indices = torch.topk(probs, 5, dim=-1)
+
+                    # Get the correct decoding dictionary for the current attribute
+                    decode_dict = getattr(self.tokenizer, attribute)
+                    
+                    print(f"\n--- Top 5 choices for: {attribute.replace('_dict_decode', '')} (at step {cur_pos}) ---")
+                    # Assuming a batch size of 1 for readable debug output
+                    for k in range(5):
+                        prob = top_probs[0, k].item()
+                        vocab_idx = top_indices[0, k].item()
+                        
+                        # Find the musical value corresponding to the vocab index
+                        musical_value = decode_dict.get(vocab_idx, "N/A (Not in this attribute's vocab)")
+                        
+                        print(f"  {k+1}. Value: {str(musical_value):<10} (Vocab Idx: {vocab_idx:<5}) | Probability: {prob:.6f}")
+                    # --- END OF NEW DEBUG BLOCK ---
+                    '''
+                    
                     next_decoder_token = sample_top_p(probs, top_p) 
                     
                     for i in range(next_decoder_token.size(0)):  # Ensure that all next_decoder_token values are in sample_indices
@@ -413,34 +458,55 @@ class MusicLlamaConditional:
 
                 next_decoder_token_out = torch.cat([next_decoder_token_out, next_decoder_token], dim=-1) #batch*len_x, len_y
             
-            #remove the sos_out token 
-            next_decoder_token_out_reshaped = next_decoder_token_out[:, 1:].view(tokens.shape[0], -1 ,6) #batch*len_x, 6 --> batch, len_x, 6
-            next_decoder_token_lang = self.tokenizer.convert_from_language_tokens(next_decoder_token_out_reshaped) #batch, lenx, 6 
-            previous_onset = tokens[:, cur_pos-1, 0] #batch, 
-            if any(previous_onset < 0): #when encountering the sos token (onset = 0), replace the onset with 0
-                previous_onset = torch.where(previous_onset < 0, torch.zeros_like(previous_onset), previous_onset)
-            new_onset = previous_onset + next_decoder_token_lang.clone().detach()[:, -1, 0].to(previous_onset) #batch, + batch --> batch
-            next_decoder_token_onset = torch.cat ([new_onset.unsqueeze(-1) ,next_decoder_token_lang.clone().detach()[:, -1, 1:]],dim=-1).to(tokens) #batch, 1  cat  batch, 5
-            next_token = torch.where(
-                input_mask[:, cur_pos], tokens[:, cur_pos], next_decoder_token_onset
-            ) 
-            tokens[:, cur_pos] = next_token
+            # 4. Decode the generated language tokens back to musical values
+            next_decoder_token_out_reshaped = next_decoder_token_out[:, 1:].view(tokens.shape[0], -1 ,6) # batch*len_x, 6 -> batch, len_x, 6
+            next_decoder_token_lang = self.tokenizer.convert_from_language_tokens(next_decoder_token_out_reshaped) # batch, lenx, 6
 
-            #calculate the next position of the chord: bar, beat, chord
+            # 5. Check if the newly generated token is an EOS token.
+            # This is the single, authoritative check for EOS.
+            eos_conditions_onset = next_decoder_token_lang.clone().detach()[:, -1, 0] == self.tokenizer.eos_timeshift
+            eos_conditions_dur = next_decoder_token_lang.clone().detach()[:, -1, 1] == self.tokenizer.eos_dur
+            eos_conditions_oct = next_decoder_token_lang.clone().detach()[:, -1, 2] == self.tokenizer.eos_octave
+            eos_conditions_pitch = next_decoder_token_lang.clone().detach()[:, -1, 3] == self.tokenizer.eos_pitch_class
+            eos_conditions_instr = next_decoder_token_lang.clone().detach()[:, -1, 4] == self.tokenizer.eos_instrument
+            eos_conditions_vel = next_decoder_token_lang.clone().detach()[:, -1, 5] == self.tokenizer.eos_velocity
+            eos_conditions_all_attr = torch.stack([eos_conditions_onset, eos_conditions_dur, eos_conditions_oct, eos_conditions_pitch, eos_conditions_instr, eos_conditions_vel], dim = -1)
+            eos_conditions = torch.any(eos_conditions_all_attr, dim = -1) # Result is a boolean tensor of shape (bsz,)
+
+            # 6. Calculate the potential next musical token (if not EOS).
+            previous_onset = tokens[:, cur_pos-1, 0]
+            # Handle cases where the previous token was symbolic (e.g., SOS < 0) by treating its onset as 0.
+            previous_onset = torch.where(previous_onset < 0, torch.zeros_like(previous_onset), previous_onset)
+            # Calculate the new absolute onset.
+            new_onset = previous_onset + next_decoder_token_lang.clone().detach()[:, -1, 0].to(previous_onset)
+            # Construct the full musical token [onset, duration, ...].
+            next_musical_token = torch.cat([new_onset.unsqueeze(-1), next_decoder_token_lang.clone().detach()[:, -1, 1:]],dim=-1).to(tokens)
+
+            # 7. Prepare the symbolic EOS token for insertion.
+            eos_compound_tensor = torch.tensor(self.tokenizer.eos_token_compound, device=tokens.device, dtype=tokens.dtype)
+
+            # 8. Write the correct token (musical or symbolic EOS) to the main tokens tensor.
+            for i in range(bsz):
+                # Only modify the token if the sequence has not already ended.
+                if not eos_reached[i]:
+                    if eos_conditions[i]:
+                        # If an EOS was just generated, write the symbolic EOS token.
+                        tokens[i, cur_pos] = eos_compound_tensor
+                    else:
+                        # Otherwise, write the normally generated musical token.
+                        tokens[i, cur_pos] = next_musical_token[i]
+
+            # 9. Calculate the next chord conditioning based on the new onsets.
             if chord_condition is not None:
-                bar_beat_chord_new_onset = onset2bar_beat_chord(next_token[:, 0], chord_condition ,time_signature_condition, bpm_condition, num_measures_condition, chord_dict)
-                bar_beat_chord_new_onset_skip_pad = torch.where(input_mask[:, cur_pos], bar_beat_chord_condition[:, cur_pos], bar_beat_chord_new_onset) 
-                bar_beat_chord_condition[:, cur_pos] = bar_beat_chord_new_onset_skip_pad
-            
-            """check if next token is eos"""
-            eos_conditions_onset= next_decoder_token_lang.clone().detach()[:, -1, 0] == self.tokenizer.eos_timeshift #batch, 
-            eos_conditions_dur = next_decoder_token_lang.clone().detach()[:, -1, 1] == self.tokenizer.eos_dur #batch,
-            eos_conditions_oct = next_decoder_token_lang.clone().detach()[:, -1, 2] == self.tokenizer.eos_octave #batch,
-            eos_conditions_pitch = next_decoder_token_lang.clone().detach()[:, -1, 3] == self.tokenizer.eos_pitch_class #batch,
-            eos_conditions_instr = next_decoder_token_lang.clone().detach()[:, -1, 4] == self.tokenizer.eos_instrument #batch,
-            eos_conditions_vel = next_decoder_token_lang.clone().detach()[:, -1, 5] == self.tokenizer.eos_velocity #batch,
-            eos_conditions_all_attr = torch.stack([eos_conditions_onset, eos_conditions_dur, eos_conditions_oct, eos_conditions_pitch, eos_conditions_instr, eos_conditions_vel], dim = -1) #batch, 6
-            eos_conditions = torch.any(eos_conditions_all_attr, dim = -1).to(input_mask) # batch, 1 
+                current_onsets = tokens[:, cur_pos, 0]
+                bar_beat_chord_new_onset = onset2bar_beat_chord(current_onsets, chord_condition, time_signature_condition, bpm_condition, num_measures_condition, chord_dict)
+                # Update the chord condition tensor for sequences that have not yet ended.
+                for i in range(bsz):
+                    if not eos_reached[i]:
+                        bar_beat_chord_condition[i, cur_pos] = bar_beat_chord_new_onset[i]
+
+            # 10. Update the eos_reached flag for the entire batch.
+            eos_reached |= (~input_mask[:, cur_pos].squeeze(-1)) & eos_conditions
 
             # Update eos_reached based on the mask and EOS conditions
             eos_reached |= (~input_mask[:, cur_pos].squeeze(-1)) & eos_conditions   
@@ -456,31 +522,43 @@ class MusicLlamaConditional:
                 break 
         # tokens = tokens[:, condition_token_length:, :] #remove SOS token
 
-         #TODO: in the future, return logprob
-        out_tokens, out_logprobs = [], []
+        # --- IMPROVED OUTPUT TRUNCATION ---
+        out_tokens = []
+        out_logprobs = [] # Not implemented, but placeholder remains
+
+        # Find the first occurrence of EOS for each item in the batch
+        eos_indices = []
+        for i in range(bsz):
+            # Find the first index where eos_reached was True for this sequence
+            eos_idx_tensor = (tokens[i, :, 0] == self.tokenizer.eos_token).nonzero(as_tuple=True)[0]
+            if len(eos_idx_tensor) > 0:
+                eos_indices.append(eos_idx_tensor[0].item())
+            else:
+                # If no EOS token was found, use the full generated length
+                eos_indices.append(total_len)
+
         for i, toks in enumerate(tokens.tolist()):
-            # cut to max gen len
-            start = 0 if echo else len(prompt_tokens[i])
-            toks = toks[start : len(prompt_tokens[i]) + max_gen_len]
-            probs = None
-            """if logprobs:
-                probs = token_logprobs[i][start : len(prompt_tokens[i]) + max_gen_len]"""
-            # cut to after eos tok if any
-            for j, stop_token in enumerate([self.tokenizer.eos_timeshift, self.tokenizer.eos_dur, self.tokenizer.eos_octave, self.tokenizer.eos_pitch_class, self.tokenizer.eos_instrument, self.tokenizer.eos_velocity]): #BATCH, LEN, 6 --> CHECK EACH LAST DIM AND COMPARE WITH STOP TOKENS --> FIND SMALLEST 
-                if j==0: #skip onset
-                    continue
-                try:
-                    eos_idx = [row[j] for row in toks].index(stop_token)  #basically [row[j] for row in toks] means toks[:, i] 
-                    toks = toks[:eos_idx]
-                    probs = probs[:eos_idx] if logprobs else None
-                except ValueError:
-                    pass
-            out_tokens.append(toks)
-            out_logprobs.append(probs)
+            # Determine the start and end points for slicing
+            start_index = 0 if echo else len(prompt_tokens[i])
+            end_index = eos_indices[i]
+
+            # Slice the tokens to get the final output
+            final_toks = toks[start_index:end_index]
+            
+            out_tokens.append(final_toks)
+            # When logprobs are implemented, they should be sliced here too
+            # out_logprobs.append(token_logprobs[i][start_index:end_index] if logprobs else None)
+
+        out_logprobs_no_cond_tokens = [] # Placeholder
         out_tokens_no_cond_tokens = []
-        out_logprobs_no_cond_tokens = []
-        for i, condition_token_length in enumerate(condition_token_lengths):
-            out_tokens_no_cond_tokens.append(out_tokens[i][condition_token_length:])
+        if condition_token_lengths:
+            for i, condition_token_length in enumerate(condition_token_lengths):
+                # This assumes the condition tokens are part of the prompt and handled by the `echo` flag.
+                # If `echo=True`, the slicing above already handles it. Let's adjust for your specific use case.
+                out_tokens_no_cond_tokens.append(out_tokens[i][condition_token_length:])
+        else:
+             out_tokens_no_cond_tokens = out_tokens
+
 
         print(f"after cutting condition tokens: {out_tokens_no_cond_tokens}")
         return (out_tokens_no_cond_tokens, out_logprobs_no_cond_tokens if logprobs else None)
@@ -496,6 +574,7 @@ class MusicLlamaConditional:
         temperature: float = 0.6,
         top_p: float = 0.9,
         max_gen_len: Optional[int] = None,
+        min_gen_len: int = 0,
         logprobs: bool = False,
         condition_token_lengths: List[int] = None,
         chord_token_indices: List[List[int]] = None,
@@ -535,6 +614,7 @@ class MusicLlamaConditional:
             metadata_condition=metadata_condition, 
             chord_condition = chord_condition,
             max_gen_len=max_gen_len,
+            min_gen_len=min_gen_len,
             temperature=temperature,
             top_p=top_p,
             logprobs=logprobs,
@@ -571,26 +651,26 @@ class MusicLlamaConditional:
                 {
                     "generation": {
                         "role": "assistant",
-                        "content": self.tokenizer.compound_to_midi_multi(t), #a list of midi objects each contains at most 15 instruments
-                        "chord": self.tokenizer.compound_to_midi_multi([chord]),
+                        "content": self.tokenizer.compound_to_midi_multi(t, bpm=b), #a list of midi objects each contains at most 15 instruments
+                        "chord": self.tokenizer.compound_to_midi_multi([chord], bpm=b),
                         "tokens": t,
                         "chord_tokens": [chord],
                     },
                 }
-                for chord,t in zip(chord_tokens, generation_tokens_post_proc) #t is a list of tensors with shape (len, 6)
+                for chord,t, b in zip(chord_tokens, generation_tokens_post_proc, bpm_condition) #t is a list of tensors with shape (len, 6)
             ]
         else:
             return [
                 {
                     "generation": {
                         "role": "assistant",
-                        "content": self.tokenizer.compound_to_midi_multi(t), #a list of midi objects each contains at most 15 instruments
+                        "content": self.tokenizer.compound_to_midi_multi(t, bpm=b), #a list of midi objects each contains at most 15 instruments
                         "chord": None,
                         "tokens": t,
                         "chord_tokens": None,
                     },
                 }
-                for t in generation_tokens_post_proc #t is a list of tensors with shape (len, 6)
+                for t, b in zip(generation_tokens_post_proc, bpm_condition) #t is a list of tensors with shape (len, 6)
             ]   
     @staticmethod
     def postprocess_split(tokens):

@@ -2,6 +2,7 @@
 # Questo script è stato adattato da finetuning.py per eseguire la distillazione della conoscenza.
 # La distillazione trasferisce la conoscenza da un modello grande (teacher) a uno più piccolo (student).
 
+import json
 import sys
 import os
 import fire
@@ -22,10 +23,12 @@ from peft import prepare_model_for_kbit_training
 # Importazioni dal progetto llama-recipes
 from llama_recipes.datasets.music_tokenizer import MusicTokenizer
 from llama_recipes.datasets.lakh_dataset import LakhDataset
+from llama_recipes.datasets.commu_con_gen_dataset import Commu_Con_Gen_Datasets
 from llama_recipes.utils.config_utils import get_distillation_configs, set_seed, get_dataloader_kwargs
 
 # Importazione della classe custom per il caricamento del teacher
 from generation import MusicLlama
+from generation_conditioned import MusicLlamaConditional
 
 # Ignora gli avvisi di performance
 import warnings
@@ -135,7 +138,7 @@ def train_distillation_with_debug(student_model, teacher_model, train_dataloader
     return {"final_validation_loss": avg_eval_loss}
 
 def main(**kwargs):
-    # Ottiene le configurazioni ESATTAMENTE COME PRIMA
+    # This part remains the same
     (
         model_configs,
         train_config,
@@ -143,26 +146,32 @@ def main(**kwargs):
         lora_config,
         llama_adapter_config,
         prefix_config,
-        quantization_config, # Questo viene già generato dalla tua funzione se passi --quantization
+        quantization_config,
         dataset_config,
         wandb_config,
     ) = get_distillation_configs(**kwargs)
 
     set_seed(train_config.seed)
 
-    # --- CARICAMENTO DEL MODELLO TEACHER (logica invariata) ---
-    print(f"Caricamento del modello Teacher da checkpoint: {train_config.teacher_model_checkpoint}")
-    teacher_llama = MusicLlama.build(
+    print(f"Loading CONDITIONAL teacher model from: {train_config.teacher_model_checkpoint}")
+
+    # Load the dictionary from the JSON file using the 'json' module
+    with open(train_config.additional_token_dict, "r") as f:
+        loaded_token_dict = json.load(f)
+
+    # Call the builder with the loaded dictionary
+    teacher_llama = MusicLlamaConditional.build_commu_con_gen(
         ckpt_dir=train_config.teacher_model_checkpoint,
         model_config_path=train_config.teacher_model_config,
         tokenizer_path=train_config.tokenizer_path,
         max_seq_len=train_config.context_length,
         max_batch_size=train_config.val_batch_size,
-        finetuned_PEFT_weight_path=None,
+        finetuned_PEFT_weight_path=train_config.teacher_peft_weights,
+        additional_token_dict=loaded_token_dict, # Pass the loaded dictionary here
     )
     teacher_model = teacher_llama.model
     teacher_model.eval()
-    print("Modello Teacher caricato con successo.")
+    print("Conditional teacher model loaded successfully.")
     print("-" * 50)
     print("Dettagli del Modello Student:")
     print(f"  -> Parametri: {sum(p.numel() for p in teacher_model.parameters()) / 1_000_000:.2f} Milioni")
@@ -178,10 +187,9 @@ def main(**kwargs):
     # 1. Creiamo un oggetto LlamaConfig dal dizionario 'model_configs' 
     #    che la tua funzione 'get_distillation_configs' ha già caricato dal tuo file .json custom.
     print("\n--- DEBUG: VERIFICA CONFIGURAZIONE CARICATA ---")
-    import json
-    print("Dizionario 'model_configs' caricato da get_distillation_configs:")
-    print(json.dumps(model_configs, indent=2))
-    print("--------------------------------------------------\n")
+    #print("Dizionario 'model_configs' caricato da get_distillation_configs:")
+    #print(json.dumps(model_configs, indent=2))
+    #print("--------------------------------------------------\n")
     
     student_config = LlamaConfig(**model_configs)
 
@@ -212,8 +220,16 @@ def main(**kwargs):
     print("-" * 50)
     
     # --- PREPARAZIONE DATASET (invariato) ---
-    train_dataset = LakhDataset(dataset_config=train_config, tokenizer=tokenizer, partition="train")
-    eval_dataset = LakhDataset(dataset_config=train_config, tokenizer=tokenizer, partition="validation")
+    if train_config.dataset == "lakh_dataset":
+        train_dataset = LakhDataset(dataset_config=dataset_config, tokenizer=tokenizer, partition="train")
+        eval_dataset = LakhDataset(dataset_config=dataset_config, tokenizer=tokenizer, partition="validation")
+        print("Successfully loaded LakhDataset.")
+    elif train_config.dataset == "commu_con_gen_dataset":
+        train_dataset = Commu_Con_Gen_Datasets(dataset_config=dataset_config, tokenizer=tokenizer, partition="train")
+        eval_dataset = Commu_Con_Gen_Datasets(dataset_config=dataset_config, tokenizer=tokenizer, partition="validation")
+        print("Successfully loaded Commu_Con_Gen_Datasets.")
+    else:
+        raise ValueError(f"Unsupported dataset: {train_config.dataset}. Please check the --dataset argument.")
 
     train_dl_kwargs = get_dataloader_kwargs(train_config, train_dataset, tokenizer, "train")
     train_dataloader = DataLoader(train_dataset, **train_dl_kwargs)

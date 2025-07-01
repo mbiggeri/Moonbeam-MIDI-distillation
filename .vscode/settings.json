@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./recipes/inference/custom_music_generation"
+    ]
+}

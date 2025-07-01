@@ -435,67 +435,102 @@ class MusicTokenizer():
         return tokens
 
     @staticmethod
-    def compound_to_midi(tokens, TIME_RESOLUTION = 100, debug=False):
-        #TODO: double check and add doc string
+    def compound_to_midi(tokens, TIME_RESOLUTION=100, bpm=120, debug=False):
         """
-        tokens: npy array with shape (len, 6)
+        Converts a list of compound tokens to a Mido MIDI object with correct BPM.
+        
+        Args:
+            tokens (list): A list of token rows, where each row represents a note.
+            TIME_RESOLUTION (int): The number of ticks per second used to generate the tokens.
+            bpm (int): The desired beats per minute for the output MIDI file.
+            debug (bool): If True, prints warning messages.
         """
         mid = mido.MidiFile()
-        mid.ticks_per_beat = TIME_RESOLUTION // 2 # 2 beats/second at quarter=120
+        # Use a standard ticks_per_beat value. 480 is common.
+        mid.ticks_per_beat = 480
+
+        # Create a metadata track and add the tempo information.
+        # This is the crucial step for setting the BPM.
+        meta_track = mido.MidiTrack()
+        mid.tracks.append(meta_track)
+        meta_track.append(mido.MetaMessage('set_tempo', tempo=mido.bpm2tempo(bpm), time=0))
+
+        # --- Time Rescaling ---
+        # The tokens are generated at TIME_RESOLUTION (e.g., 100 ticks per second).
+        # We need to convert these to MIDI ticks, which are relative to the beat.
+        # midi_ticks = time_in_seconds * ticks_per_beat * bpm / 60
+        # time_in_seconds = token_ticks / TIME_RESOLUTION
+        scale_factor = (mid.ticks_per_beat * bpm / 60) / TIME_RESOLUTION
 
         time_index = defaultdict(list)
 
-        for _, (row) in enumerate(tokens):
-            time_in_ticks,duration,octave, pitch ,instrument,velocity = row
+        for _, row in enumerate(tokens):
+            time_in_token_ticks, duration_token_ticks, octave, pitch, instrument, velocity = row
+            
+            # Rescale the onset and duration to match the new BPM and ticks_per_beat
+            onset_midi_ticks = round(time_in_token_ticks * scale_factor)
+            duration_midi_ticks = round(duration_token_ticks * scale_factor)
+
+            # Ensure duration is at least 1 tick
+            if duration_midi_ticks == 0:
+                duration_midi_ticks = 1
+
             note = octave_pitch_class_to_pitch(octave, pitch)
-            time_index[(time_in_ticks,0)].append((note, instrument, velocity)) # 0 = onset
-            time_index[(time_in_ticks+duration,1)].append((note, instrument, velocity)) # 1 = offset
-        track_idx = {} # maps instrument to (track number, current time)
-        num_tracks = 0
-        for time_in_ticks, event_type in sorted(time_index.keys()):
-            for (note, instrument, velocity) in time_index[(time_in_ticks, event_type)]:
-                if event_type == 0: # onset
-                    try:
-                        track, previous_time, idx = track_idx[instrument]
-                    except KeyError:
-                        idx = num_tracks
-                        previous_time = 0
-                        track = mido.MidiTrack()
-                        mid.tracks.append(track)
-                        if instrument == 128: # drums always go on channel 9
-                            idx = 9
-                            message = mido.Message('program_change', channel=idx, program=0)
-                        else:
-                            message = mido.Message('program_change', channel=idx, program=instrument)
-                        track.append(message)
-                        num_tracks += 1
-                        if num_tracks == 9:
-                            num_tracks += 1 # skip the drums track
+            time_index[(onset_midi_ticks, 0)].append((note, instrument, velocity))  # 0 = onset
+            time_index[(onset_midi_ticks + duration_midi_ticks, 1)].append((note, instrument, velocity))  # 1 = offset
 
-                    track.append(mido.Message(
-                        'note_on', note=note, channel=idx, velocity=velocity,
-                        time=time_in_ticks-previous_time))
-                    track_idx[instrument] = (track, time_in_ticks, idx)
-                else: # offset
-                    try:
-                        track, previous_time, idx = track_idx[instrument]
-                    except KeyError:
-                        # shouldn't happen because we should have a corresponding onset
-                        if debug:
-                            print('IGNORING bad offset')
+        track_idx = {}  # maps instrument to (track number, current time)
+        
+        # Group notes by instrument and create a track for each
+        instrument_notes = defaultdict(list)
+        for time_key, notes in time_index.items():
+            for note_data in notes:
+                instrument = note_data[1]
+                instrument_notes[instrument].append((time_key, note_data))
 
-                        continue
+        # Keep track of channels, skipping channel 9 (percussion)
+        channel_map = {}
+        next_channel = 0
 
-                    track.append(mido.Message(
-                        'note_off', note=note, channel=idx,
-                        time=time_in_ticks-previous_time))
-                    track_idx[instrument] = (track, time_in_ticks, idx)
+        for instrument in sorted(instrument_notes.keys()):
+            if next_channel == 9:
+                next_channel += 1
+            
+            # Use channel 9 for percussion instrument (128)
+            current_channel = 9 if instrument == 128 else next_channel
+            if instrument not in channel_map:
+                 channel_map[instrument] = current_channel
+                 if instrument != 128:
+                    next_channel += 1
 
+        for instrument, notes_for_instrument in instrument_notes.items():
+            track = mido.MidiTrack()
+            mid.tracks.append(track)
+            previous_time = 0
+            
+            # Set the instrument for this track
+            program = 0 if instrument == 128 else instrument
+            channel = channel_map[instrument]
+            track.append(mido.Message('program_change', channel=channel, program=program, time=0))
+
+            sorted_events = sorted(notes_for_instrument, key=lambda x: x[0][0])
+
+            for (time_in_ticks, event_type), (note, _, velocity) in sorted_events:
+                delta_time = time_in_ticks - previous_time
+                msg_type = 'note_on' if event_type == 0 else 'note_off'
+                
+                track.append(mido.Message(
+                    msg_type, note=note, channel=channel, velocity=velocity,
+                    time=delta_time))
+                previous_time = time_in_ticks
+        
         return mid
 
-    def compound_to_midi_multi(self, list_of_compound_lists):
+    def compound_to_midi_multi(self, list_of_compound_lists, bpm=120):
+        # This function now accepts a bpm argument and passes it to compound_to_midi
         out = []
         for _, compound_lists in enumerate(list_of_compound_lists):
-            midi_out = self.compound_to_midi(compound_lists)
+            # Pass the bpm to the single MIDI conversion method
+            midi_out = self.compound_to_midi(compound_lists, bpm=bpm)
             out.append(midi_out)
         return out
