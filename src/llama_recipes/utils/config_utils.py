@@ -29,6 +29,7 @@ from llama_recipes.configs import train_config as TRAIN_CONFIG
 from llama_recipes.configs.peft import lora_config, llama_adapter_config, prefix_config
 from llama_recipes.configs.datasets import samsum_dataset, grammar_dataset, alpaca_dataset, custom_dataset, lakhmidi_dataset, merge_dataset, emophia_con_gen_dataset, commu_con_gen_dataset
 from llama_recipes.configs.wandb import wandb_config
+from llama_recipes.utils.dataset_utils import DATASET_PREPROC
 
 
 def set_seed(seed):
@@ -54,6 +55,28 @@ def update_config(config_objects, **kwargs):
             if hasattr(config_objects, key):
                 setattr(config_objects, key, value)
     return config_objects
+
+def generate_peft_config(train_config, kwargs):
+    configs = (lora_config, llama_adapter_config, prefix_config)
+    peft_configs = (LoraConfig, AdaptionPromptConfig, PrefixTuningConfig)
+    names = tuple(c.__name__.rstrip("_config") for c in configs)
+
+    if train_config.peft_method not in names:
+        raise RuntimeError(f"Peft config not found: {train_config.peft_method}")
+
+    if train_config.peft_method == "prefix":
+        raise RuntimeError("PrefixTuning is currently not supported (see https://github.com/meta-llama/llama-recipes/issues/359#issuecomment-2089350811)")
+
+    if train_config.enable_fsdp and train_config.peft_method == "llama_adapter":
+        raise RuntimeError("Llama_adapter is currently not supported in combination with FSDP (see https://github.com/meta-llama/llama-recipes/issues/359#issuecomment-2089274425)")
+
+    config = configs[names.index(train_config.peft_method)]()
+
+    update_config(config, **kwargs)
+    params = asdict(config)
+    peft_config = peft_configs[names.index(train_config.peft_method)](**params)
+
+    return peft_config
 
 def get_distillation_configs(
     **kwargs
