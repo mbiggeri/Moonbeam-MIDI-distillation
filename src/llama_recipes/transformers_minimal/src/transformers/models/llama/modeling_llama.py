@@ -94,6 +94,7 @@ class LlamaRMSNorm(nn.Module):
         hidden_states = hidden_states.to(torch.float32)
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        self.weight = self.weight.to(hidden_states.device)
         return self.weight * hidden_states.to(input_dtype)
 
 
