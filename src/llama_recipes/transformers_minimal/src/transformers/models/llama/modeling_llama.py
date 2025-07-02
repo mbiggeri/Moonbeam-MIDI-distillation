@@ -1464,19 +1464,27 @@ class LlamaModel(LlamaPreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
+        
     def embed_tokens(self, input_ids, additional_token_map = None):
+        # NEW: Ensure all custom modules are on the correct device.
+        target_device = input_ids.device
+        self.onset_embedding.to(target_device)
+        self.dur_embedding.to(target_device)
+        self.octave_embedding.to(target_device)
+        self.pitch_embedding.to(target_device)
+        self.instrument_embedding.to(target_device)
+        self.velocity_embedding.to(target_device)
+        self.supplementary_embedding.to(target_device)
+        self.supplementary_MLP.to(target_device)
+        
         #(onset, duration, octave, pitch_class, instrument, velocity); batch, len, 6 --> batch, len, dim*6 
         #1. scan through the onset and detect positions of SOS and EOS;         
         #2. where sos --> embed using sos; where eos --> embed using eos, other places embed using FME
         #3. skew them together 
         #additional_token_map (Optional[dict]): A mapping of new token IDs (key) to embedding indices in supplementary_embedding. Example: {token_id: embedding_index}
         #SOS, EOS tokens are embedded seperately
-        sos = self.supplementary_embedding(torch.tensor(0).to(input_ids.device))[None, None, ...].expand(input_ids.size(0), -1, -1) #dim*6 --> 1, 1, dim*6 --> batch, 1, dim*6
-        eos = self.supplementary_embedding(torch.tensor(1).to(input_ids.device))[None, None, ...].expand(input_ids.size(0), -1, -1)
-
-        #Detect SOS and EOS:
-        where_sos = (input_ids[:, :, 0] == self.sos_token).unsqueeze(-1)
-        where_eos = (input_ids[:, :, 0] == self.eos_token).unsqueeze(-1)
+        sos = self.supplementary_embedding(torch.tensor(0).to(target_device))[None, None, ...].expand(input_ids.size(0), -1, -1) #dim*6 --> 1, 1, dim*6 --> batch, 1, dim*6
+        eos = self.supplementary_embedding(torch.tensor(1).to(target_device))[None, None, ...].expand(input_ids.size(0), -1, -1)
 
         # Handle new tokens if provided
         if additional_token_map is not None:
