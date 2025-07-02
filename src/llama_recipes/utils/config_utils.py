@@ -24,6 +24,7 @@ from transformers.data import DataCollatorForSeq2Seq
 
 
 # Import delle altre configurazioni (che rimangono classi Python)
+from llama_recipes.configs import datasets, lora_config, llama_adapter_config, prefix_config
 from llama_recipes.configs import fsdp_config as FSDP_CONFIG
 from llama_recipes.configs import train_config as TRAIN_CONFIG
 from llama_recipes.configs.peft import lora_config, llama_adapter_config, prefix_config
@@ -77,6 +78,17 @@ def generate_peft_config(train_config, kwargs):
     peft_config = peft_configs[names.index(train_config.peft_method)](**params)
 
     return peft_config
+
+def generate_dataset_config(train_config, kwargs):
+    names = tuple(DATASET_PREPROC.keys())
+
+    assert train_config.dataset in names, f"Unknown dataset: {train_config.dataset}"
+
+    dataset_config = {k:v for k, v in inspect.getmembers(datasets)}[train_config.dataset]()
+
+    update_config(dataset_config, **kwargs)
+
+    return  dataset_config
 
 def get_distillation_configs(
     **kwargs
