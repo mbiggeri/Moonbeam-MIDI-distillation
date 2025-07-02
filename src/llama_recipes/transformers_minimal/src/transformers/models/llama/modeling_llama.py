@@ -1486,6 +1486,10 @@ class LlamaModel(LlamaPreTrainedModel):
         sos = self.supplementary_embedding(torch.tensor(0).to(target_device))[None, None, ...].expand(input_ids.size(0), -1, -1) #dim*6 --> 1, 1, dim*6 --> batch, 1, dim*6
         eos = self.supplementary_embedding(torch.tensor(1).to(target_device))[None, None, ...].expand(input_ids.size(0), -1, -1)
 
+        #Detect SOS and EOS:
+        where_sos = (input_ids[:, :, 0] == self.sos_token).unsqueeze(-1)
+        where_eos = (input_ids[:, :, 0] == self.eos_token).unsqueeze(-1)
+
         # Handle new tokens if provided
         if additional_token_map is not None:
             where_new_tokens_dict = {}
