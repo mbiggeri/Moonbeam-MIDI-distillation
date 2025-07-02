@@ -234,7 +234,7 @@ def main(**kwargs):
         if is_xpu_available():
             model.to("xpu:0")
         elif torch.cuda.is_available():
-            model.to("cuda")
+            model.to("cuda:0")
 
 
      # Load and preprocess the dataset for training and validation
