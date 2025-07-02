@@ -308,6 +308,11 @@ def main(**kwargs):
         else:
             print(f"Frozen: {name} | Shape: {param.shape} | Parameters: {param.numel()}")
     print(f"\nTotal Trainable Parameters: {total_trainable}")
+    
+    if torch.cuda.is_available() and not train_config.enable_fsdp and not train_config.enable_ddp:
+        print("Forcing model to cuda:0 before training starts...")
+        model.to("cuda:0")
+        
     # Start the training process
     results = train_con_gen(
         model,
